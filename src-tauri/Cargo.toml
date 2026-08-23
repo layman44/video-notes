@@ -1,0 +1,46 @@
+[package]
+name = "video-notes"
+version = "0.1.42"
+description = "Local-first video to Markdown desktop application"
+authors = ["VideoNotes contributors"]
+edition = "2021"
+
+[lib]
+name = "video_notes_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sysinfo = "0.37"
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2.7.2"
+ureq = "2.12"
+url = "2"
+zip = "0.6.6"
+encoding_rs = "0.8"
+tempfile = "3"
+tokio = { version = "1", features = ["process", "time", "fs", "io-util", "rt-multi-thread", "macros"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+futures-util = "0.3"
+walkdir = "2"
+bzip2 = "0.5"
+tar = "0.4"
+libloading = "0.8"
+whatlang = "0.16"
+regex = "1.10"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Globalization"] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
