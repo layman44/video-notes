@@ -4,6 +4,18 @@ export type JobStatus = "completed" | "transcribed" | "processing" | "waiting" |
 
 export type Platform = "bilibili" | "douyin";
 
+export type AsrBackend = "funasr-nano" | "openasr-moss-q4";
+
+export interface MossAsrConfig {
+  chunkSeconds: number;
+  overlapSeconds: number;
+}
+
+export interface AsrSettings {
+  backend: AsrBackend;
+  moss: MossAsrConfig;
+}
+
 export type JobPhase =
   | "media_download"
   | "media_normalize"
@@ -32,6 +44,8 @@ export interface Job {
   phaseUnit?: string;
   sourceUrl: string;
   thumbnailUrl?: string;
+  asrBackend?: AsrBackend;
+  asrConfigJson?: string;
   errorMessage?: string;
   statusMessage?: string;
 }
@@ -46,6 +60,7 @@ export interface ReconciledJob {
   phaseUnit?: string;
   statusMessage?: string;
   errorMessage?: string;
+  asrBackend?: AsrBackend;
 }
 
 export interface SourcePreview {
@@ -119,6 +134,7 @@ export interface AsrSegment {
 
 export interface AsrSnapshot {
   jobId: string;
+  modelId?: string;
   segments: TranscriptSegment[];
   language?: string;
   processedUntil: number;
@@ -132,6 +148,7 @@ export interface AsrSnapshot {
 export interface AsrModelStatus {
   id: string;
   name: string;
+  backend?: AsrBackend;
   installed: boolean;
   fileSize?: number;
   sizeLabel: string;

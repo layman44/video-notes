@@ -6,7 +6,7 @@ import { ModelsPage } from "./features/models/ModelsPage";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { TaskDetailPage } from "./features/task/TaskDetailPage";
 import { TasksPage } from "./features/task/TasksPage";
-import { loadPlaybackPreferences, savePlaybackPreferences } from "./lib/preferences";
+import { loadAsrSettings, loadPlaybackPreferences, savePlaybackPreferences } from "./lib/preferences";
 import { runtime } from "./lib/runtime";
 import type { Job, JobPhase, ModelReadiness, PageId, SourcePreview } from "./types";
 
@@ -29,10 +29,11 @@ export default function App() {
     void Promise.all([
       runtime.listJobs(),
       runtime.inspectAsrModel(),
+      runtime.inspectMossModel(),
       runtime.inspectSummaryModel(),
       runtime.inspectTranslationModel(),
     ])
-      .then(async ([loadedJobs, asr, summary, translation]) => {
+      .then(async ([loadedJobs, asr, moss, summary, translation]) => {
         let jobs = loadedJobs;
         try {
           const reconciled = await runtime.reconcileJobs();
@@ -50,7 +51,7 @@ export default function App() {
         }
         if (!active) return;
         setJobs(jobs);
-        setModelReadiness({ asr: asr.installed, summary: summary.installed, translation: translation.installed });
+        setModelReadiness({ asr: asr.installed || moss.installed, summary: summary.installed, translation: translation.installed });
       })
       .catch(() => {
         if (active) setModelReadiness({ asr: false, summary: false, translation: false });
@@ -214,12 +215,18 @@ export default function App() {
       phaseUnit: "percent",
       sourceUrl: preview.sourceUrl,
       thumbnailUrl: preview.thumbnailUrl,
+      asrBackend: loadAsrSettings().backend,
+      asrConfigJson: JSON.stringify(loadAsrSettings().moss),
     };
     setJobs((current) => [job, ...current]);
     setSelectedJobId(job.id);
     setActivePage("task-detail");
-    void runtime.saveJob(job);
-    if (runtime.isDesktop()) runPipeline(job);
+    if (runtime.isDesktop()) {
+      // Persist the backend snapshot before the native command reads it.
+      void runtime.saveJob(job).then(() => runPipeline(job));
+    } else {
+      void runtime.saveJob(job);
+    }
   }, [runPipeline]);
 
   const retryPipeline = useCallback((job: Job) => {
@@ -230,6 +237,7 @@ export default function App() {
       || job.status === "transcribed"
       || job.status === "completed"
       || downstreamPhase;
+    const asrSettings = loadAsrSettings();
     const retryingJob: Job = {
       ...job,
       status: "processing",
@@ -241,10 +249,13 @@ export default function App() {
       updatedAt: "刚刚",
       errorMessage: undefined,
       statusMessage: mediaAlreadyPrepared ? "正在重新启动语音转录……" : "正在重新准备本地视频与音频……",
+      asrBackend: asrSettings.backend,
+      asrConfigJson: JSON.stringify(asrSettings.moss),
     };
     setJobs((current) => current.map((item) => (item.id === job.id ? retryingJob : item)));
-    void runtime.saveJob(retryingJob);
-    runPipeline(retryingJob, mediaAlreadyPrepared);
+    // A retry may skip media preparation, so wait for the DB snapshot before
+    // starting native transcription; otherwise it could pick the old backend.
+    void runtime.saveJob(retryingJob).then(() => runPipeline(retryingJob, mediaAlreadyPrepared));
   }, [runPipeline]);
 
   const translateJob = useCallback((job: Job) => {
@@ -379,6 +390,7 @@ export default function App() {
 
   const redownloadJob = useCallback(async (job: Job) => {
     await runtime.resetTaskMedia(job.id);
+    const asrSettings = loadAsrSettings();
     const restartingJob: Job = {
       ...job,
       status: "processing",
@@ -390,6 +402,8 @@ export default function App() {
       updatedAt: "刚刚",
       errorMessage: undefined,
       statusMessage: "正在重新下载本地视频……",
+      asrBackend: asrSettings.backend,
+      asrConfigJson: JSON.stringify(asrSettings.moss),
     };
     setJobs((current) => current.map((item) => item.id === job.id ? restartingJob : item));
     await runtime.saveJob(restartingJob);
@@ -398,6 +412,7 @@ export default function App() {
 
   const retranscribeJob = useCallback(async (job: Job) => {
     await runtime.resetTaskTranscript(job.id);
+    const asrSettings = loadAsrSettings();
     const retranscribingJob: Job = {
       ...job,
       status: "processing",
@@ -409,6 +424,8 @@ export default function App() {
       updatedAt: "刚刚",
       errorMessage: undefined,
       statusMessage: "正在重新进行本地语音转写……",
+      asrBackend: asrSettings.backend,
+      asrConfigJson: JSON.stringify(asrSettings.moss),
     };
     setJobs((current) => current.map((item) => item.id === job.id ? retranscribingJob : item));
     await runtime.saveJob(retranscribingJob);

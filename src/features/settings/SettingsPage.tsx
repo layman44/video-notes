@@ -1,7 +1,8 @@
 import { Check, CircleAlert, FolderOpen, LoaderCircle, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { runtime } from "../../lib/runtime";
-import type { DataDirectorySettings, MediaToolsStatus } from "../../types";
+import { loadAsrSettings, saveAsrSettings } from "../../lib/preferences";
+import type { AsrBackend, DataDirectorySettings, MediaToolsStatus } from "../../types";
 
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
   return (
@@ -27,6 +28,13 @@ export function SettingsPage({
   const [dataDirectory, setDataDirectory] = useState<DataDirectorySettings | null>(null);
   const [directoryBusy, setDirectoryBusy] = useState(false);
   const [directoryFeedback, setDirectoryFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(null);
+  const [asrSettings, setAsrSettings] = useState(loadAsrSettings);
+
+  const updateAsrBackend = (backend: AsrBackend) => {
+    const next = { ...asrSettings, backend };
+    setAsrSettings(next);
+    saveAsrSettings(next);
+  };
 
   useEffect(() => {
     let active = true;
@@ -108,6 +116,16 @@ export function SettingsPage({
 
       <section className="settings-group">
         <h2>播放与转录</h2>
+        <div className="setting-row">
+          <div>
+            <strong>默认识别模型</strong>
+            <span>{asrSettings.backend === "openasr-moss-q4" ? "MOSS q4 高精度，速度较慢" : "Fun-ASR-Nano 快速识别"}</span>
+          </div>
+          <select value={asrSettings.backend} onChange={(event) => updateAsrBackend(event.target.value as AsrBackend)} aria-label="默认识别模型">
+            <option value="funasr-nano">FunASR 快速</option>
+            <option value="openasr-moss-q4">MOSS q4 高精度</option>
+          </select>
+        </div>
         <div className="setting-row">
           <div>
             <strong>点击转录后自动播放</strong>

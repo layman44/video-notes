@@ -1,14 +1,15 @@
-use crate::{chunk_stitcher, pause_alignment, punctuation_ffi};
+use crate::{chunk_stitcher, pause_alignment};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{
     cmp::Ordering as CmpOrdering,
-    path::{Path, PathBuf},
+    path::Path,
     process::Stdio,
+    net::TcpListener,
     sync::atomic::{AtomicBool, Ordering},
 };
 use tauri::ipc::Channel;
 use tempfile::TempDir;
-use walkdir::WalkDir;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, BufReader},
     process::Command,
@@ -41,6 +42,10 @@ pub(crate) fn hidden_command(program: impl AsRef<Path>) -> Command {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AsrConfig {
+    /// Backend identifier captured when the task starts.  The frontend may change
+    /// its default later, but an active task remains bound to this value.
+    #[serde(default = "default_backend")]
+    pub backend: String,
     pub funasr_mode: String,
     pub funasr_runtime_path: String,
     pub funasr_model_path: String,
@@ -55,10 +60,23 @@ pub struct AsrConfig {
     pub verification_debug_log_path: String,
     pub funasr_chunk_seconds: f64,
 
+    #[serde(default)]
+    pub openasr_runtime_path: String,
+    #[serde(default)]
+    pub openasr_model_path: String,
+    #[serde(default = "default_moss_chunk_seconds")]
+    pub moss_chunk_seconds: f64,
+    #[serde(default = "default_moss_overlap_seconds")]
+    pub moss_overlap_seconds: f64,
+
     pub ffmpeg_path: String,
     pub ffprobe_path: String,
     pub threads: usize,
 }
+
+fn default_backend() -> String { "funasr-nano".to_string() }
+fn default_moss_chunk_seconds() -> f64 { 30.0 }
+fn default_moss_overlap_seconds() -> f64 { 1.0 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -128,16 +146,6 @@ pub(crate) struct VadSpeechSegment {
     pub end: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct FunAsrChunkPlan {
-    pub nominal_start: f64,
-    pub nominal_end: f64,
-    pub audio_start: f64,
-    pub audio_end: f64,
-    pub vad_aligned: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "event", content = "data")]
 pub enum TranscriptionEvent {
@@ -168,31 +176,16 @@ fn send(channel: &Channel<TranscriptionEvent>, event: TranscriptionEvent) -> Res
     channel.send(event).map_err(|e| format!("向前端发送识别事件失败：{e}"))
 }
 
-#[derive(Debug, Default)]
-struct IncrementalPauseRepairState {
-    repairs: Vec<PauseBoundaryRepair>,
-    processed_until: f64,
-}
-
-fn merge_incremental_pause_repairs(
-    state: &mut IncrementalPauseRepairState,
-    mut repairs: Vec<PauseBoundaryRepair>,
-) -> usize {
-    let before = state.repairs.len();
-    state.repairs.append(&mut repairs);
-    state.repairs.sort_by(|a, b| a.boundary_offset.cmp(&b.boundary_offset));
-    state.repairs.dedup_by(|a, b| {
-        a.boundary_offset.abs_diff(b.boundary_offset) <= 2 || (a.time - b.time).abs() <= 0.20
-    });
-    state.repairs.len().saturating_sub(before)
-}
-
 pub async fn run(
     request: StartTranscriptionRequest,
     on_event: Channel<TranscriptionEvent>,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
-    run_funasr_native(request, on_event, cancel).await
+    if request.config.backend == "openasr-moss-q4" {
+        run_openasr_moss(request, on_event, cancel).await
+    } else {
+        run_funasr_native(request, on_event, cancel).await
+    }
 }
 
 fn validate_funasr_config(config: &AsrConfig) -> Result<(), String> {
@@ -236,11 +229,18 @@ fn validate_funasr_config(config: &AsrConfig) -> Result<(), String> {
 
 fn parse_srt_clock(value: &str) -> Option<f64> {
     let normalized = value.trim().replace(',', ".");
-    let mut parts = normalized.split(':');
-    let hours = parts.next()?.parse::<f64>().ok()?;
-    let minutes = parts.next()?.parse::<f64>().ok()?;
-    let seconds = parts.next()?.parse::<f64>().ok()?;
-    Some(hours * 3600.0 + minutes * 60.0 + seconds)
+    if let Ok(seconds) = normalized.parse::<f64>() {
+        return Some(seconds);
+    }
+    let parts = normalized
+        .split(':')
+        .map(|part| part.parse::<f64>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    match parts.as_slice() {
+        [minutes, seconds] => Some(minutes * 60.0 + seconds),
+        [hours, minutes, seconds] => Some(hours * 3600.0 + minutes * 60.0 + seconds),
+        _ => None,
+    }
 }
 
 fn strip_model_tags(text: &str) -> String {
@@ -252,25 +252,6 @@ fn strip_model_tags(text: &str) -> String {
         result.replace_range(start..end, "");
     }
     result.trim().to_string()
-}
-
-fn script_counts(text: &str) -> (usize, usize, usize, usize) {
-    let mut latin = 0usize;
-    let mut han = 0usize;
-    let mut kana = 0usize;
-    let mut hangul = 0usize;
-    for ch in text.chars() {
-        if ch.is_ascii_alphabetic() {
-            latin += 1;
-        } else if matches!(ch as u32, 0x4E00..=0x9FFF | 0x3400..=0x4DBF) {
-            han += 1;
-        } else if matches!(ch as u32, 0x3040..=0x30FF | 0x31F0..=0x31FF) {
-            kana += 1;
-        } else if matches!(ch as u32, 0xAC00..=0xD7AF | 0x1100..=0x11FF) {
-            hangul += 1;
-        }
-    }
-    (latin, han, kana, hangul)
 }
 
 fn script_token_counts(text: &str) -> (usize, usize, usize, usize) {
@@ -349,202 +330,8 @@ pub(crate) fn dominant_language(text: &str) -> &'static str {
     }
 }
 
-pub(crate) fn is_cjk_fullwidth_punct(ch: char) -> bool {
-    matches!(
-        ch,
-        '，' | '。' | '！' | '？' | '：' | '；' | '、' | '“' | '”' | '‘' | '’' | '（' | '）' | '《' | '》' | '【' | '】' | '—' | '…'
-    )
-}
-
-fn should_apply_zh_en_punctuation(text: &str) -> bool {
-    let (_, _, kana, hangul) = script_counts(text);
-    kana == 0 && hangul == 0 && !text.trim().is_empty()
-}
-
-fn normalize_punctuation_for_text(original: &str, restored: &str) -> String {
-    if dominant_language(original) != "English" {
-        return restored.trim().to_string();
-    }
-    let mapped: String = restored
-        .chars()
-        .map(|ch| match ch {
-            '，' => ',',
-            '。' => '.',
-            '？' => '?',
-            '！' => '!',
-            '：' => ':',
-            '；' => ';',
-            '、' => ',',
-            other => other,
-        })
-        .collect();
-    let mut out = String::with_capacity(mapped.len() + 8);
-    let mut need_space = false;
-    let mut capitalize = true;
-    for ch in mapped.chars() {
-        if matches!(ch, ',' | '.' | '?' | '!' | ':' | ';') {
-            while out.ends_with(' ') {
-                out.pop();
-            }
-            out.push(ch);
-            need_space = true;
-            if matches!(ch, '.' | '?' | '!') {
-                capitalize = true;
-            }
-            continue;
-        }
-        if ch.is_whitespace() {
-            if !out.ends_with(' ') {
-                out.push(' ');
-            }
-            continue;
-        }
-        if need_space && !out.is_empty() && !out.ends_with(' ') {
-            out.push(' ');
-        }
-        need_space = false;
-        if capitalize && ch.is_ascii_alphabetic() {
-            out.push(ch.to_ascii_uppercase());
-            capitalize = false;
-        } else {
-            out.push(ch);
-            if ch.is_ascii_alphabetic() {
-                capitalize = false;
-            }
-        }
-    }
-    out.trim().to_string()
-}
-
-
-fn is_cleanup_punctuation(ch: char) -> bool {
-    matches!(
-        ch,
-        ',' | '.' | '?' | '!' | ':' | ';' | '，' | '。' | '？' | '！' | '：' | '；' | '、' | '…'
-    )
-}
-
 fn is_han_char(ch: char) -> bool {
     matches!(ch as u32, 0x3400..=0x4DBF | 0x4E00..=0x9FFF)
-}
-
-fn normalized_cluster(marks: &[char], english: bool) -> String {
-    let only_ellipsis = marks.iter().all(|ch| matches!(ch, '.' | '…'));
-    if only_ellipsis && (marks.iter().filter(|ch| **ch == '.').count() >= 3 || marks.contains(&'…')) {
-        return if english { "...".into() } else { "……".into() };
-    }
-
-    if let Some(last_emphasis) = marks.iter().rev().find(|ch| matches!(ch, '?' | '？' | '!' | '！')) {
-        return match (*last_emphasis, english) {
-            ('?' | '？', true) => "?".into(),
-            ('?' | '？', false) => "？".into(),
-            ('!' | '！', true) => "!".into(),
-            ('!' | '！', false) => "！".into(),
-            _ => unreachable!(),
-        };
-    }
-    if marks.iter().any(|ch| matches!(ch, '.' | '。')) {
-        return if english { ".".into() } else { "。".into() };
-    }
-    if marks.iter().any(|ch| matches!(ch, ';' | '；')) {
-        return if english { ";".into() } else { "；".into() };
-    }
-    if marks.iter().any(|ch| matches!(ch, ':' | '：')) {
-        return if english { ":".into() } else { "：".into() };
-    }
-    if marks.iter().any(|ch| matches!(ch, ',' | '，' | '、')) {
-        return if english { ",".into() } else { "，".into() };
-    }
-    String::new()
-}
-
-/// Nano already emits punctuation. Running CT-Punc over it duplicates marks and
-/// can damage decimals, so Nano only uses this conservative formatting cleanup.
-fn clean_native_punctuation(text: &str) -> String {
-    let chars = text.trim().chars().collect::<Vec<_>>();
-    if chars.is_empty() {
-        return String::new();
-    }
-    let english = dominant_language(text) == "English";
-    let mut out = String::with_capacity(text.len());
-    let mut i = 0usize;
-
-    while i < chars.len() {
-        let ch = chars[i];
-        if ch.is_whitespace() {
-            let mut next = i + 1;
-            while next < chars.len() && chars[next].is_whitespace() {
-                next += 1;
-            }
-            let previous = out.chars().rev().find(|value| !value.is_whitespace());
-            let following = chars.get(next).copied();
-            let decimal_gap = previous == Some('.')
-                && out.trim_end_matches(' ').chars().rev().nth(1).is_some_and(|value| value.is_ascii_digit())
-                && following.is_some_and(|value| value.is_ascii_digit());
-            let cjk_gap = previous.is_some_and(is_han_char) && following.is_some_and(is_han_char);
-            if !decimal_gap
-                && !cjk_gap
-                && !following.is_some_and(is_cleanup_punctuation)
-                && !out.is_empty()
-                && !out.ends_with(' ')
-            {
-                out.push(' ');
-            }
-            i = next;
-            continue;
-        }
-
-        if is_cleanup_punctuation(ch) {
-            let previous = out.chars().rev().find(|value| !value.is_whitespace());
-            let mut next_nonspace = i + 1;
-            while next_nonspace < chars.len() && chars[next_nonspace].is_whitespace() {
-                next_nonspace += 1;
-            }
-            if ch == '.'
-                && previous.is_some_and(|value| value.is_ascii_digit())
-                && chars.get(next_nonspace).is_some_and(|value| value.is_ascii_digit())
-            {
-                while out.ends_with(' ') {
-                    out.pop();
-                }
-                out.push('.');
-                i = next_nonspace;
-                continue;
-            }
-
-            let mut marks = Vec::new();
-            let mut cursor = i;
-            while cursor < chars.len() {
-                if is_cleanup_punctuation(chars[cursor]) {
-                    marks.push(chars[cursor]);
-                    cursor += 1;
-                    continue;
-                }
-                if chars[cursor].is_whitespace() {
-                    let mut probe = cursor + 1;
-                    while probe < chars.len() && chars[probe].is_whitespace() {
-                        probe += 1;
-                    }
-                    if probe < chars.len() && is_cleanup_punctuation(chars[probe]) {
-                        cursor = probe;
-                        continue;
-                    }
-                }
-                break;
-            }
-            while out.ends_with(' ') {
-                out.pop();
-            }
-            out.push_str(&normalized_cluster(&marks, english));
-            i = cursor;
-            continue;
-        }
-
-        out.push(ch);
-        i += 1;
-    }
-
-    out.trim().to_string()
 }
 
 fn parse_srt_segments(
@@ -744,68 +531,6 @@ fn tail_text(text: &str, max_chars: usize) -> String {
         return text.to_string();
     }
     chars[chars.len() - max_chars..].iter().collect()
-}
-
-async fn apply_punctuation_batch(config: &AsrConfig, texts: &[String]) -> Result<Vec<String>, String> {
-    if config.funasr_mode == "nano" {
-        return Ok(texts.iter().map(|text| clean_native_punctuation(text)).collect());
-    }
-
-    let mut output = texts.iter().map(|text| clean_native_punctuation(text)).collect::<Vec<_>>();
-    let mut selected_indices = Vec::new();
-    let mut selected_texts = Vec::new();
-    for (index, text) in texts.iter().enumerate() {
-        if should_apply_zh_en_punctuation(text) {
-            selected_indices.push(index);
-            selected_texts.push(text.clone());
-        }
-    }
-    if selected_texts.is_empty() {
-        return Ok(output);
-    }
-
-    let dll = PathBuf::from(&config.punctuation_runtime_path);
-    let model = PathBuf::from(&config.punctuation_model_path);
-    let restored = tokio::task::spawn_blocking(move || {
-        punctuation_ffi::punctuate_batch(&dll, &model, &selected_texts)
-    })
-    .await
-    .map_err(|e| format!("等待 sherpa-onnx 标点 C API 失败：{e}"))??;
-
-    if restored.len() != selected_indices.len() {
-        return Err(format!(
-            "sherpa-onnx 标点 C API 返回数量不一致：期望 {}，实际 {}",
-            selected_indices.len(),
-            restored.len()
-        ));
-    }
-    for ((index, restored_text), original) in selected_indices
-        .into_iter()
-        .zip(restored.into_iter())
-        .zip(texts.iter().filter(|t| should_apply_zh_en_punctuation(t)))
-    {
-        output[index] = clean_native_punctuation(&normalize_punctuation_for_text(original, &restored_text));
-    }
-    Ok(output)
-}
-
-
-fn find_vad_runtime(runtime_path: &str) -> Option<PathBuf> {
-    let runtime = Path::new(runtime_path);
-    let root = runtime.parent()?;
-    WalkDir::new(root)
-        .max_depth(5)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(Result::ok)
-        .find(|entry| {
-            entry.file_type().is_file()
-                && entry
-                    .file_name()
-                    .to_string_lossy()
-                    .eq_ignore_ascii_case("llama-funasr-vad.exe")
-        })
-        .map(|entry| entry.path().to_path_buf())
 }
 
 async fn extract_full_audio_wav(ffmpeg: &str, video: &str, output: &Path) -> Result<(), String> {
@@ -2154,6 +1879,378 @@ async fn run_funasr_native(
     Ok(())
 }
 
+/// Run the OpenASR native server once and feed it fixed, slightly-overlapping
+/// windows.  MOSS returns a complete response per window, so snapshots are
+/// emitted after each response and the overlap is removed at the segment level.
+/// The frontend only sees the stitched Raw timeline; chunk boundaries never
+/// become user-facing subtitle metadata.
+async fn run_openasr_moss(
+    request: StartTranscriptionRequest,
+    on_event: Channel<TranscriptionEvent>,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    if request.config.openasr_runtime_path.trim().is_empty()
+        || !Path::new(&request.config.openasr_runtime_path).is_file()
+    {
+        return Err(format!("OpenASR Runtime 不存在：{}", request.config.openasr_runtime_path));
+    }
+    if request.config.openasr_model_path.trim().is_empty()
+        || !Path::new(&request.config.openasr_model_path).is_file()
+    {
+        return Err(format!("MOSS q4 模型不存在：{}", request.config.openasr_model_path));
+    }
+    let duration = match request.media_duration {
+        Some(value) if value.is_finite() && value > 0.0 => value,
+        _ => probe_duration(&request.config.ffprobe_path, &request.video_path).await?,
+    };
+    let chunk_seconds = request.config.moss_chunk_seconds.clamp(15.0, 120.0);
+    let overlap_seconds = request
+        .config
+        .moss_overlap_seconds
+        .clamp(0.0, (chunk_seconds / 3.0).min(5.0));
+    let step_seconds = (chunk_seconds - overlap_seconds).max(1.0);
+    let temp = TempDir::new().map_err(|error| format!("创建 MOSS 临时目录失败：{error}"))?;
+
+    let port = TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|error| format!("为 OpenASR 分配本地端口失败：{error}"))?
+        .local_addr()
+        .map_err(|error| format!("读取 OpenASR 本地端口失败：{error}"))?
+        .port();
+    let address = format!("127.0.0.1:{port}");
+    let model_parent = Path::new(&request.config.openasr_model_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let mut server = hidden_command(&request.config.openasr_runtime_path);
+    server
+        .arg("serve")
+        .arg("--addr")
+        .arg(&address)
+        .arg("--max-native-sessions-per-model")
+        .arg("1")
+        .arg("--model-pack")
+        .arg(&request.config.openasr_model_path)
+        .env("OPENASR_OFFLINE", "1")
+        .env("OPENASR_HOME", model_parent)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = server
+        .spawn()
+        .map_err(|error| format!("无法启动 OpenASR 服务（{}）：{error}", request.config.openasr_runtime_path))?;
+    let stderr = child.stderr.take();
+    let stderr_task = tokio::spawn(async move {
+        let Some(mut stderr) = stderr else { return Vec::new(); };
+        let mut bytes = Vec::new();
+        let _ = stderr.read_to_end(&mut bytes).await;
+        bytes
+    });
+
+    let client = reqwest::Client::new();
+    let health_url = format!("http://{address}/health");
+    let mut healthy = false;
+    for _ in 0..120 {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            let _ = stderr_task.await;
+            send(&on_event, TranscriptionEvent::Cancelled {})?;
+            return Ok(());
+        }
+        if let Ok(response) = client.get(&health_url).send().await {
+            if response.status().is_success() {
+                healthy = true;
+                break;
+            }
+        }
+        sleep(Duration::from_millis(250)).await;
+    }
+    if !healthy {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        let stderr_text = String::from_utf8_lossy(&stderr_task.await.unwrap_or_default()).into_owned();
+        return Err(format!("OpenASR 服务启动超时\n{}", tail_text(&stderr_text, 4000)));
+    }
+
+    send(&on_event, TranscriptionEvent::Started { duration })?;
+    send(&on_event, TranscriptionEvent::PhaseStarted {
+        phase: "recognition".into(),
+        message: "MOSS q4 原始识别".into(),
+    })?;
+    send(&on_event, TranscriptionEvent::Log {
+        message: "OpenASR MOSS q4 单实例识别服务已就绪".into(),
+    })?;
+
+    let total_ms = (duration * 1000.0).round() as u64;
+    send(&on_event, TranscriptionEvent::PhaseProgress {
+        phase: "recognition".into(),
+        completed: 0,
+        total: Some(total_ms),
+        unit: "milliseconds".into(),
+        message: "MOSS 模型已就绪，正在逐段转写……".into(),
+    })?;
+
+    let mut segments: Vec<TranscriptSegment> = Vec::new();
+    let mut chunk_index = 0usize;
+    let mut start = 0.0f64;
+    while start < duration {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            let _ = stderr_task.await;
+            send(&on_event, TranscriptionEvent::Cancelled {})?;
+            return Ok(());
+        }
+        let actual_duration = (duration - start).min(chunk_seconds);
+        let wav_path = temp.path().join(format!("moss-{chunk_index:04}.wav"));
+        extract_chunk(
+            &request.config.ffmpeg_path,
+            &request.video_path,
+            start,
+            actual_duration,
+            &wav_path,
+        )
+        .await?;
+        let mut attempts = 0usize;
+        let (status, body) = loop {
+            attempts += 1;
+            let bytes = tokio::fs::read(&wav_path)
+                .await
+                .map_err(|error| format!("读取 MOSS 音频分片失败：{error}"))?;
+            let part = reqwest::multipart::Part::bytes(bytes)
+                .file_name(format!("moss-{chunk_index:04}.wav"))
+                .mime_str("audio/wav")
+                .map_err(|error| format!("创建 MOSS 音频请求失败：{error}"))?;
+            let form = reqwest::multipart::Form::new()
+                .part("file", part)
+                .text("model", "moss-transcribe-diarize")
+                .text("response_format", "verbose_json");
+            let response = client
+                .post(format!("http://{address}/v1/audio/transcriptions"))
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|error| format!("MOSS 分片 {} 请求失败：{error}", chunk_index + 1))?;
+            let status = response.status();
+            let body = response
+                .text()
+                .await
+                .map_err(|error| format!("读取 MOSS 分片 {} 响应失败：{error}", chunk_index + 1))?;
+            if status.as_u16() == 429 && attempts < 20 {
+                send(&on_event, TranscriptionEvent::Log {
+                    message: format!("OpenASR MOSS 会话忙碌（429），正在等待释放重试（第 {}/20 次）……", attempts),
+                })?;
+                sleep(Duration::from_millis(1500)).await;
+                continue;
+            }
+            break (status, body);
+        };
+        if !status.is_success() {
+            return Err(format!("MOSS 分片 {} 识别失败（{}）：{}", chunk_index + 1, status, tail_text(&body, 2000)));
+        }
+        let local_segments = parse_openasr_segments(&body, chunk_index, actual_duration);
+        let ownership_start = if chunk_index == 0 {
+            0.0
+        } else {
+            start + overlap_seconds / 2.0
+        };
+        for mut segment in local_segments {
+            segment.start += start;
+            segment.end += start;
+            if segment.start > duration + 0.25 || segment.end <= ownership_start {
+                continue;
+            }
+            if segment.start < ownership_start {
+                segment.start = ownership_start;
+            }
+            let duplicate = segments.iter().any(|previous| {
+                normalize_overlap_text(&previous.text) == normalize_overlap_text(&segment.text)
+                    && (previous.start - segment.start).abs() <= overlap_seconds + 1.0
+            });
+            if !duplicate {
+                segments.push(segment);
+            }
+        }
+        segments.sort_by(|left, right| {
+            left.start
+                .partial_cmp(&right.start)
+                .unwrap_or(CmpOrdering::Equal)
+                .then_with(|| left.end.partial_cmp(&right.end).unwrap_or(CmpOrdering::Equal))
+        });
+        let processed_until = (start + actual_duration).min(duration);
+        let all_text = segments.iter().map(|segment| segment.text.as_str()).collect::<Vec<_>>().join(" ");
+        send(&on_event, TranscriptionEvent::PhaseProgress {
+            phase: "recognition".into(),
+            completed: (processed_until * 1000.0).round() as u64,
+            total: Some(total_ms),
+            unit: "milliseconds".into(),
+            message: format!("MOSS 正在转写 {} / {}", format_seconds_mmss(processed_until), format_seconds_mmss(duration)),
+        })?;
+        send(&on_event, TranscriptionEvent::Snapshot {
+            segments: segments.clone(),
+            language: Some(dominant_language(&all_text).to_string()),
+            processed_until,
+        })?;
+        chunk_index += 1;
+        start += step_seconds;
+    }
+
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+    let stderr_text = String::from_utf8_lossy(&stderr_task.await.unwrap_or_default()).into_owned();
+    if segments.is_empty() {
+        return Err(format!("MOSS 未产生有效文本\n{}", tail_text(&stderr_text, 3000)));
+    }
+    let all_text = segments.iter().map(|segment| segment.text.as_str()).collect::<Vec<_>>().join(" ");
+    send(&on_event, TranscriptionEvent::PhaseCompleted {
+        phase: "recognition".into(),
+        message: format!("MOSS 原始语音识别完成 · {} 段", segments.len()),
+    })?;
+    send(&on_event, TranscriptionEvent::Finished {
+        segments,
+        language: Some(dominant_language(&all_text).to_string()),
+        pause_repairs: Vec::new(),
+        bridge_repairs: Vec::new(),
+        verification_results: Vec::new(),
+    })?;
+    Ok(())
+}
+
+fn normalize_overlap_text(text: &str) -> String {
+    text.chars()
+        .filter(|character| !character.is_whitespace() && !"，。！？,.!?、".contains(*character))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn parse_openasr_segments(body: &str, chunk_index: usize, chunk_duration: f64) -> Vec<TranscriptSegment> {
+    if let Ok(value) = serde_json::from_str::<Value>(body) {
+        let mut parsed = Vec::new();
+        collect_openasr_segment_arrays(&value, &mut parsed, chunk_index);
+        if !parsed.is_empty() {
+            return parsed
+                .into_iter()
+                .filter(|segment| !segment.text.trim().is_empty())
+                .map(|mut segment| {
+                    segment.start = segment.start.max(0.0).min(chunk_duration);
+                    segment.end = segment.end.max(segment.start + 0.05).min(chunk_duration.max(segment.start + 0.05));
+                    segment
+                })
+                .collect();
+        }
+        let text = openasr_text_value(&value);
+        if !text.trim().is_empty() {
+            let tagged = parse_openasr_tagged_text(&text, chunk_index, chunk_duration);
+            if !tagged.is_empty() {
+                return tagged;
+            }
+            return vec![TranscriptSegment {
+                id: format!("openasr-moss-{chunk_index}-0"),
+                start: 0.0,
+                end: chunk_duration,
+                text: strip_model_tags(text.trim()),
+            }];
+        }
+    }
+    parse_openasr_tagged_text(body, chunk_index, chunk_duration)
+}
+
+fn parse_openasr_tagged_text(body: &str, chunk_index: usize, chunk_duration: f64) -> Vec<TranscriptSegment> {
+    let Ok(pattern) = regex::Regex::new(
+        r"\[([0-9]+(?:\.[0-9]+)?)\](?:\s*\[S\d+\])?\s*([^\[\]]+?)\s*\[([0-9]+(?:\.[0-9]+)?)\]",
+    ) else {
+        return if body.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![TranscriptSegment {
+                id: format!("openasr-moss-{chunk_index}-0"),
+                start: 0.0,
+                end: chunk_duration,
+                text: strip_model_tags(body.trim()),
+            }]
+        };
+    };
+    let mut result = Vec::new();
+    for (index, capture) in pattern.captures_iter(body).enumerate() {
+        let Some(start) = parse_srt_clock(capture.get(1).map(|value| value.as_str()).unwrap_or("")) else { continue; };
+        let Some(end) = parse_srt_clock(capture.get(3).map(|value| value.as_str()).unwrap_or("")) else { continue; };
+        let text = strip_model_tags(capture.get(2).map(|value| value.as_str()).unwrap_or("").trim());
+        if text.is_empty() { continue; }
+        result.push(TranscriptSegment {
+            id: format!("openasr-moss-{chunk_index}-{index}"),
+            start,
+            end: end.max(start + 0.05),
+            text,
+        });
+    }
+    if result.is_empty() && !body.trim().is_empty() {
+        result.push(TranscriptSegment {
+            id: format!("openasr-moss-{chunk_index}-0"),
+            start: 0.0,
+            end: chunk_duration,
+            text: strip_model_tags(body.trim()),
+        });
+    }
+    result
+}
+
+fn collect_openasr_segment_arrays(value: &Value, output: &mut Vec<TranscriptSegment>, chunk_index: usize) {
+    if let Some(array) = value.as_array() {
+        collect_openasr_segment_array(array, output, chunk_index);
+    }
+    if let Some(object) = value.as_object() {
+        for key in ["segments", "utterances", "results", "chunks"] {
+            if let Some(array) = object.get(key).and_then(Value::as_array) {
+                collect_openasr_segment_array(array, output, chunk_index);
+            }
+        }
+    }
+    if let Some(object) = value.as_object() {
+        for (key, child) in object {
+            if !["segments", "utterances", "results", "chunks"].contains(&key.as_str())
+                && (child.is_object() || child.is_array())
+            {
+                collect_openasr_segment_arrays(child, output, chunk_index);
+            }
+        }
+    }
+}
+
+fn collect_openasr_segment_array(array: &[Value], output: &mut Vec<TranscriptSegment>, chunk_index: usize) {
+        for (index, item) in array.iter().enumerate() {
+            let start = item.get("start").and_then(Value::as_f64).or_else(|| item.get("start_time").and_then(Value::as_f64));
+            let end = item.get("end").and_then(Value::as_f64).or_else(|| item.get("end_time").and_then(Value::as_f64));
+            let text = item.get("text").and_then(Value::as_str).or_else(|| item.get("transcript").and_then(Value::as_str));
+            if let (Some(start), Some(end), Some(text)) = (start, end, text) {
+                output.push(TranscriptSegment {
+                    id: format!("openasr-moss-{chunk_index}-{index}"),
+                    start,
+                    end,
+                    text: strip_model_tags(text.trim()),
+                });
+            }
+        }
+}
+
+fn openasr_text_value(value: &Value) -> String {
+    if let Some(text) = value.as_str() { return text.to_string(); }
+    if let Some(object) = value.as_object() {
+        for key in ["text", "transcript", "transcription", "output"] {
+            if let Some(candidate) = object.get(key) {
+                let text = openasr_text_value(candidate);
+                if !text.trim().is_empty() { return text; }
+            }
+        }
+        for child in object.values() {
+            let text = openasr_text_value(child);
+            if !text.trim().is_empty() { return text; }
+        }
+    }
+    if let Some(array) = value.as_array() {
+        return array.iter().map(openasr_text_value).filter(|text| !text.trim().is_empty()).collect::<Vec<_>>().join(" ");
+    }
+    String::new()
+}
+
 async fn probe_duration(ffprobe: &str, video: &str) -> Result<f64, String> {
     let out = hidden_command(ffprobe)
         .args(["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video])
@@ -2182,8 +2279,8 @@ async fn extract_chunk(ffmpeg: &str, video: &str, start: f64, duration: f64, wav
 }
 
 #[cfg(test)]
-mod punctuation_cleanup_tests {
-    use super::{clean_native_punctuation, dominant_language, is_chinese_text};
+mod transcriber_tests {
+    use super::{dominant_language, is_chinese_text};
 
     #[test]
     fn language_detection_distinguishes_chinese_with_english_terms() {
@@ -2192,28 +2289,6 @@ mod punctuation_cleanup_tests {
         assert!(!is_chinese_text("I'm an ugly duckling, quick to the party."));
         assert_eq!(dominant_language("I'm an ugly duckling, quick to the party."), "English");
         assert_eq!(dominant_language("怖いね。俺は。はい。"), "Japanese");
-    }
-
-    #[test]
-    fn removes_duplicate_native_marks() {
-        assert_eq!(clean_native_punctuation("黄河才会死心。。"), "黄河才会死心。");
-        assert_eq!(
-            clean_native_punctuation("为何才会死心吧？？可能我偏要一条路走到黑吧。。"),
-            "为何才会死心吧？可能我偏要一条路走到黑吧。"
-        );
-    }
-
-    #[test]
-    fn resolves_mixed_clusters_and_preserves_decimal() {
-        assert_eq!(
-            clean_native_punctuation("来有奖竞猜啊。，你们觉得我猜596 . 5今天"),
-            "来有奖竞猜啊。你们觉得我猜596.5今天"
-        );
-    }
-
-    #[test]
-    fn keeps_english_spacing_readable() {
-        assert_eq!(clean_native_punctuation("Really?? Yes!!"), "Really? Yes!");
     }
 
     #[test]

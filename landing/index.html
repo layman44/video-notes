@@ -1,0 +1,1592 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CPU-AI-HUB - 适配 CPU 的纯本地 AI 桌面工具矩阵</title>
+  <meta name="description" content="无需昂贵独立显卡，直接通过 CPU 即可稳定离线运行。涵盖视频 AI 笔记、PDF 智能工作台、试卷智能切题解析等独立桌面工具，零数据上传，永久隐私安全。" />
+  
+  <!-- Premium Fonts: Plus Jakarta Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <!-- FontAwesome 6 Pro-level icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+
+  <style>
+    :root {
+      /* Titanium Obsidian & Aurora Glow System */
+      --bg-base: #06080d;
+      --bg-surface: rgba(13, 18, 30, 0.7);
+      --bg-surface-elevated: rgba(19, 26, 43, 0.85);
+      --bg-card-inner: rgba(0, 0, 0, 0.35);
+
+      --border-hairline: rgba(255, 255, 255, 0.08);
+      --border-highlight: rgba(255, 255, 255, 0.16);
+      --border-glow: rgba(56, 189, 248, 0.35);
+
+      --text-white: #ffffff;
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-tertiary: #64748b;
+
+      /* Luminescent Accents */
+      --cyan: #00f2fe;
+      --blue: #38bdf8;
+      --indigo: #818cf8;
+      --purple: #c084fc;
+      --emerald: #34d399;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+
+      /* Precision Shadows & Gloss */
+      --glass-gloss: inset 0 1px 1px 0 rgba(255, 255, 255, 0.12), inset 0 -1px 1px 0 rgba(0, 0, 0, 0.4);
+      --shadow-card: 0 20px 40px -15px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.07);
+      --shadow-card-hover: 0 30px 60px -15px rgba(0, 0, 0, 0.9), 0 0 30px rgba(56, 189, 248, 0.18), 0 0 0 1px rgba(56, 189, 248, 0.4);
+      --glow-hero: radial-gradient(circle, rgba(56, 189, 248, 0.15) 0%, rgba(99, 102, 241, 0.08) 45%, transparent 70%);
+
+      --font-main: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: var(--font-main);
+      background-color: var(--bg-base);
+      color: var(--text-primary);
+      line-height: 1.6;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* Cosmic Background & Radiant Grid */
+    .viewport-ambient {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      pointer-events: none;
+      z-index: 0;
+      overflow: hidden;
+    }
+    .grid-lines {
+      position: absolute;
+      inset: 0;
+      background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 70% 60% at 50% 12%, #000 40%, transparent 100%);
+      -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 12%, #000 40%, transparent 100%);
+    }
+    .aurora-top {
+      position: absolute;
+      top: -180px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 1000px;
+      height: 650px;
+      background: var(--glow-hero);
+      filter: blur(80px);
+    }
+    .aurora-bottom-right {
+      position: absolute;
+      bottom: 10%;
+      right: -5%;
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, rgba(168, 85, 247, 0.08) 0%, transparent 70%);
+      filter: blur(100px);
+    }
+
+    .container {
+      max-width: 1300px;
+      margin: 0 auto;
+      padding: 0 32px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Floating Navbar */
+    header {
+      position: sticky;
+      top: 18px;
+      z-index: 100;
+      margin-bottom: 50px;
+    }
+    .navbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 24px;
+      background: rgba(13, 18, 30, 0.75);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      border: 1px solid var(--border-hairline);
+      border-radius: 9999px;
+      box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.6), var(--glass-gloss);
+    }
+    .brand-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: var(--text-white);
+      text-decoration: none;
+      cursor: pointer;
+      letter-spacing: -0.4px;
+    }
+    .brand-chip-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--blue);
+      font-size: 0.95rem;
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.3);
+    }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 30px;
+      list-style: none;
+    }
+    .nav-item {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .nav-item:hover, .nav-item.active {
+      color: var(--blue);
+      text-shadow: 0 0 15px rgba(56, 189, 248, 0.5);
+    }
+
+    /* Product Dropdown */
+    .dropdown { position: relative; }
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: -20px;
+      padding-top: 14px;
+      min-width: 310px;
+      z-index: 10;
+    }
+    .dropdown:hover .dropdown-menu { display: block; animation: dropdownIn 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes dropdownIn {
+      from { opacity: 0; transform: translateY(8px) scale(0.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .dropdown-content {
+      background: rgba(13, 18, 30, 0.95);
+      backdrop-filter: blur(30px);
+      border: 1px solid var(--border-highlight);
+      border-radius: 18px;
+      padding: 10px;
+      box-shadow: 0 25px 50px -10px rgba(0, 0, 0, 0.8), var(--glass-gloss);
+    }
+    .dropdown-item {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 11px 14px;
+      border-radius: 12px;
+      text-decoration: none;
+      color: var(--text-white);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .dropdown-item:hover {
+      background: rgba(255, 255, 255, 0.06);
+      transform: translateX(3px);
+    }
+    .dropdown-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.15rem;
+    }
+
+    .badge-count {
+      padding: 6px 16px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-hairline);
+      border-radius: 9999px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #cbd5e1;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: var(--glass-gloss);
+    }
+    .badge-count:hover {
+      background: rgba(255, 255, 255, 0.09);
+      border-color: var(--blue);
+      color: var(--text-white);
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.25);
+    }
+
+    /* Views */
+    .view-page { display: none; }
+    .view-page.active-view { display: block; animation: pageFade 0.35s cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes pageFade {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Hero Section */
+    .hub-hero {
+      text-align: center;
+      padding: 30px 0 25px;
+    }
+    .hero-pill-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 6px 18px;
+      background: rgba(56, 189, 248, 0.06);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 9999px;
+      color: var(--blue);
+      font-size: 0.84rem;
+      font-weight: 700;
+      margin-bottom: 24px;
+      box-shadow: 0 0 20px rgba(56, 189, 248, 0.12), var(--glass-gloss);
+    }
+    .pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 10px var(--cyan);
+      animation: pulseGlow 2s infinite ease-in-out;
+    }
+    @keyframes pulseGlow {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.3); opacity: 0.7; }
+    }
+
+    .hub-hero h1 {
+      font-size: 3.9rem;
+      font-weight: 900;
+      letter-spacing: -2.2px;
+      line-height: 1.14;
+      color: var(--text-white);
+      margin-bottom: 20px;
+    }
+    .hub-hero h1 .text-aurora {
+      background: linear-gradient(135deg, #ffffff 0%, #38bdf8 40%, #818cf8 80%, #c084fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hub-hero p {
+      font-size: 1.22rem;
+      color: var(--text-secondary);
+      max-width: 760px;
+      margin: 0 auto 38px;
+      line-height: 1.68;
+    }
+
+    /* Trust Chips */
+    .hero-trust-bar {
+      display: flex;
+      justify-content: center;
+      gap: 28px;
+      flex-wrap: wrap;
+      margin-bottom: 48px;
+    }
+    .trust-chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      background: rgba(255, 255, 255, 0.025);
+      border: 1px solid var(--border-hairline);
+      padding: 6px 14px;
+      border-radius: 9999px;
+      box-shadow: var(--glass-gloss);
+    }
+    .trust-chip i {
+      color: var(--emerald);
+      font-size: 0.95rem;
+    }
+
+    /* Raycast / Linear Command Control Center */
+    .filter-control-center {
+      max-width: 860px;
+      margin: 0 auto 65px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      align-items: center;
+    }
+    .search-bar-wrap {
+      width: 100%;
+      background: rgba(13, 18, 30, 0.85);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      padding: 10px 18px;
+      border-radius: 18px;
+      border: 1px solid var(--border-highlight);
+      box-shadow: 0 15px 35px -10px rgba(0, 0, 0, 0.6), var(--glass-gloss);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      transition: all 0.25s ease;
+    }
+    .search-bar-wrap:focus-within {
+      border-color: var(--blue);
+      box-shadow: 0 0 25px rgba(56, 189, 248, 0.25), var(--glass-gloss);
+    }
+    .search-bar-wrap i.search-icon {
+      font-size: 1.1rem;
+      color: var(--blue);
+    }
+    .search-bar-wrap input {
+      border: none;
+      outline: none;
+      font-size: 0.98rem;
+      color: var(--text-white);
+      width: 100%;
+      background: transparent;
+      font-family: inherit;
+    }
+    .search-bar-wrap input::placeholder {
+      color: var(--text-tertiary);
+      font-size: 0.92rem;
+    }
+    .search-badge-hint {
+      padding: 4px 10px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-hairline);
+      border-radius: 6px;
+      font-size: 0.76rem;
+      font-family: var(--font-mono);
+      color: var(--text-tertiary);
+      white-space: nowrap;
+    }
+
+    .filter-tabs-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .tab-pill {
+      padding: 8px 20px;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-hairline);
+      color: var(--text-secondary);
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      box-shadow: var(--glass-gloss);
+    }
+    .tab-pill:hover {
+      color: var(--text-white);
+      background: rgba(255, 255, 255, 0.08);
+      border-color: var(--border-highlight);
+    }
+    .tab-pill.active {
+      background: var(--blue);
+      color: #06080d;
+      font-weight: 800;
+      border-color: var(--blue);
+      box-shadow: 0 0 20px rgba(56, 189, 248, 0.45);
+    }
+
+    /* Cards Grid */
+    .tool-matrix-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+      margin-bottom: 95px;
+    }
+    .matrix-card {
+      background: var(--bg-surface);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-hairline);
+      border-radius: 24px;
+      padding: 30px 26px;
+      box-shadow: var(--shadow-card), var(--glass-gloss);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+    }
+    .matrix-card:hover {
+      transform: translateY(-6px);
+      background: var(--bg-surface-elevated);
+      box-shadow: var(--shadow-card-hover), var(--glass-gloss);
+      border-color: var(--border-glow);
+    }
+
+    .matrix-card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .tool-icon-wrapper {
+      width: 52px;
+      height: 52px;
+      border-radius: 15px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.45rem;
+      box-shadow: var(--glass-gloss);
+    }
+    .icon-video { background: rgba(56, 189, 248, 0.12); color: var(--blue); border: 1px solid rgba(56, 189, 248, 0.3); }
+    .icon-pdf { background: rgba(244, 63, 94, 0.12); color: var(--rose); border: 1px solid rgba(244, 63, 94, 0.3); }
+    .icon-exam { background: rgba(245, 158, 11, 0.12); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.3); }
+    .icon-audio { background: rgba(168, 85, 247, 0.12); color: var(--purple); border: 1px solid rgba(168, 85, 247, 0.3); }
+    .icon-ocr { background: rgba(16, 185, 129, 0.12); color: var(--emerald); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .icon-clip { background: rgba(236, 72, 153, 0.12); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.3); }
+
+    .status-capsule {
+      font-size: 0.76rem;
+      padding: 4px 12px;
+      border-radius: 9999px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: var(--glass-gloss);
+    }
+    .capsule-ready { background: rgba(16, 185, 129, 0.12); color: var(--emerald); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .capsule-beta { background: rgba(56, 189, 248, 0.12); color: var(--blue); border: 1px solid rgba(56, 189, 248, 0.3); }
+    .capsule-dev { background: rgba(255, 255, 255, 0.04); color: #94a3b8; border: 1px solid var(--border-hairline); }
+
+    .matrix-card h3 {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: var(--text-white);
+      margin-bottom: 8px;
+      letter-spacing: -0.3px;
+    }
+    .matrix-card p {
+      color: var(--text-secondary);
+      font-size: 0.94rem;
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+
+    .card-preview-strip {
+      background: var(--bg-card-inner);
+      border: 1px solid var(--border-hairline);
+      border-radius: 12px;
+      padding: 10px 14px;
+      margin-bottom: 22px;
+      font-size: 0.82rem;
+      color: #94a3b8;
+      font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+    }
+    .card-preview-strip i { color: var(--blue); }
+
+    .matrix-features {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      margin-bottom: 26px;
+    }
+    .matrix-features li {
+      font-size: 0.88rem;
+      color: #cbd5e1;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+    .matrix-features li i {
+      color: var(--blue);
+      font-size: 0.78rem;
+    }
+
+    .matrix-card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 18px;
+      border-top: 1px solid var(--border-hairline);
+    }
+    .btn-card-link {
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: var(--blue);
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: gap 0.2s ease;
+    }
+    .matrix-card:hover .btn-card-link { gap: 10px; }
+
+    .btn-action-sm {
+      padding: 7px 16px;
+      border-radius: 9px;
+      font-size: 0.84rem;
+      font-weight: 700;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border-highlight);
+      color: var(--text-white);
+      transition: all 0.2s;
+      box-shadow: var(--glass-gloss);
+    }
+    .btn-action-sm:hover {
+      background: var(--blue);
+      color: #06080d;
+      border-color: var(--blue);
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.5);
+    }
+
+    /* Comparison Box */
+    .comparison-wrapper {
+      background: var(--bg-surface);
+      backdrop-filter: blur(24px);
+      border: 1px solid var(--border-hairline);
+      border-radius: 26px;
+      box-shadow: var(--shadow-card), var(--glass-gloss);
+      overflow: hidden;
+      margin-bottom: 90px;
+    }
+    .comparison-head {
+      background: rgba(13, 18, 30, 0.9);
+      padding: 24px 34px;
+      border-bottom: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .comparison-head h3 {
+      font-size: 1.3rem;
+      font-weight: 800;
+      color: var(--text-white);
+    }
+    .comparison-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .comparison-table th, .comparison-table td {
+      padding: 18px 34px;
+      text-align: left;
+      border-bottom: 1px solid var(--border-hairline);
+      font-size: 0.95rem;
+    }
+    .comparison-table th {
+      color: var(--text-secondary);
+      font-weight: 700;
+      background: rgba(0, 0, 0, 0.25);
+      font-size: 0.9rem;
+    }
+    .comparison-table .col-highlight {
+      background: rgba(56, 189, 248, 0.035);
+      font-weight: 700;
+      color: var(--text-white);
+    }
+
+    /* Dedicated Tool Hero */
+    .tool-hero-box {
+      text-align: center;
+      padding: 30px 0 35px;
+    }
+    .btn-back-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 20px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-highlight);
+      border-radius: 9999px;
+      color: #cbd5e1;
+      font-size: 0.86rem;
+      font-weight: 700;
+      margin-bottom: 24px;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: var(--glass-gloss);
+    }
+    .btn-back-pill:hover {
+      color: var(--text-white);
+      background: rgba(255, 255, 255, 0.1);
+      border-color: var(--blue);
+      transform: translateX(-3px);
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.25);
+    }
+    .tool-hero-box h1 {
+      font-size: 3.7rem;
+      font-weight: 900;
+      letter-spacing: -1.8px;
+      line-height: 1.15;
+      margin-bottom: 18px;
+      color: var(--text-white);
+    }
+    .tool-hero-box p {
+      font-size: 1.22rem;
+      color: var(--text-secondary);
+      max-width: 780px;
+      margin: 0 auto 34px;
+    }
+    .tool-cta-group {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      margin-bottom: 45px;
+      flex-wrap: wrap;
+    }
+    .btn-primary-dl {
+      background: var(--blue);
+      color: #06080d;
+      padding: 15px 36px;
+      border-radius: 13px;
+      font-weight: 800;
+      font-size: 1.05rem;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 0 30px rgba(56, 189, 248, 0.4), var(--glass-gloss);
+      transition: all 0.2s;
+    }
+    .btn-primary-dl:hover {
+      background: #7dd3fc;
+      transform: translateY(-2px);
+      box-shadow: 0 0 40px rgba(56, 189, 248, 0.6);
+    }
+    .btn-secondary-dl {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-white);
+      padding: 15px 30px;
+      border-radius: 13px;
+      font-weight: 700;
+      font-size: 1.05rem;
+      text-decoration: none;
+      border: 1px solid var(--border-highlight);
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      transition: all 0.2s;
+      box-shadow: var(--glass-gloss);
+    }
+    .btn-secondary-dl:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    /* Software Window Mockup */
+    .app-window-frame {
+      background: #090d15;
+      border: 1px solid var(--border-highlight);
+      border-radius: 22px;
+      box-shadow: 0 30px 80px -15px rgba(0, 0, 0, 0.85), 0 0 35px rgba(56, 189, 248, 0.12), var(--glass-gloss);
+      overflow: hidden;
+      margin-bottom: 85px;
+    }
+    .window-titlebar {
+      background: rgba(13, 18, 30, 0.95);
+      padding: 13px 22px;
+      border-bottom: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .window-dots { display: flex; gap: 8px; }
+    .dot-ctrl { width: 11px; height: 11px; border-radius: 50%; }
+    .dot-close { background: #f87171; }
+    .dot-min { background: #fbbf24; }
+    .dot-max { background: #34d399; }
+    .window-title-text {
+      font-size: 0.86rem;
+      font-weight: 700;
+      color: #94a3b8;
+      font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .window-content-split {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      min-height: 480px;
+    }
+    .split-pane-left {
+      background: #05070c;
+      padding: 26px;
+      border-right: 1px solid var(--border-hairline);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .video-viewport {
+      background: #010307;
+      border: 1px solid var(--border-hairline);
+      border-radius: 15px;
+      aspect-ratio: 16/9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      box-shadow: inset 0 0 40px rgba(0,0,0,0.9);
+    }
+    .play-orb {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: var(--blue);
+      color: #06080d;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.4rem;
+      cursor: pointer;
+      box-shadow: 0 0 30px rgba(56, 189, 248, 0.7);
+      transition: transform 0.2s;
+    }
+    .play-orb:hover { transform: scale(1.1); }
+
+    .waveform-widget {
+      background: rgba(13, 18, 30, 0.7);
+      border: 1px solid var(--border-hairline);
+      border-radius: 13px;
+      padding: 16px;
+      box-shadow: var(--glass-gloss);
+    }
+    .waveform-meta-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #94a3b8;
+      font-family: var(--font-mono);
+      margin-bottom: 10px;
+    }
+    .wave-visual-bars {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      height: 36px;
+    }
+    .wave-column {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 2px;
+      animation: waveEqualize 1.2s infinite ease-in-out alternate;
+    }
+    .wave-column.active { background: linear-gradient(180deg, #38bdf8, #818cf8); }
+    @keyframes waveEqualize {
+      0% { height: 18%; }
+      100% { height: 95%; }
+    }
+    .wave-column:nth-child(2) { animation-delay: 0.1s; }
+    .wave-column:nth-child(3) { animation-delay: 0.3s; }
+    .wave-column:nth-child(4) { animation-delay: 0.2s; }
+    .wave-column:nth-child(5) { animation-delay: 0.5s; }
+    .wave-column:nth-child(6) { animation-delay: 0.4s; }
+
+    .split-pane-right {
+      background: #080c14;
+      display: flex;
+      flex-direction: column;
+    }
+    .pane-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border-hairline);
+      background: rgba(13, 18, 30, 0.6);
+    }
+    .pane-tab {
+      padding: 14px 20px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #94a3b8;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+    .pane-tab.active {
+      color: var(--blue);
+      border-bottom-color: var(--blue);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .transcript-flow {
+      padding: 22px;
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .transcript-bubble {
+      padding: 14px 16px;
+      background: rgba(13, 18, 30, 0.6);
+      border: 1px solid var(--border-hairline);
+      border-radius: 12px;
+      box-shadow: var(--glass-gloss);
+    }
+    .transcript-bubble.highlight {
+      border-color: rgba(56, 189, 248, 0.35);
+      background: rgba(56, 189, 248, 0.07);
+    }
+    .bubble-timestamp {
+      font-size: 0.78rem;
+      color: var(--blue);
+      font-family: var(--font-mono);
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+    .bubble-zh {
+      font-size: 0.95rem;
+      color: var(--text-white);
+      font-weight: 600;
+      line-height: 1.5;
+    }
+    .bubble-en {
+      font-size: 0.86rem;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    /* Bento Grid */
+    .bento-showcase {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 26px;
+      margin-bottom: 85px;
+    }
+    .bento-tile {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: 22px;
+      padding: 30px;
+      box-shadow: var(--shadow-card), var(--glass-gloss);
+    }
+    .bento-tile.col-span-2 { grid-column: span 2; }
+    .bento-tile h4 {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: var(--text-white);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .bento-tile p {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+      line-height: 1.65;
+    }
+
+    /* Download Banner */
+    .hero-download-banner {
+      background: radial-gradient(circle at 50% 0%, rgba(56, 189, 248, 0.18) 0%, rgba(13, 18, 30, 0.95) 75%);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: var(--text-white);
+      border-radius: 26px;
+      padding: 55px 36px;
+      text-align: center;
+      margin-bottom: 80px;
+      box-shadow: 0 25px 50px -10px rgba(0, 0, 0, 0.85), 0 0 35px rgba(56, 189, 248, 0.15), var(--glass-gloss);
+    }
+    .hero-download-banner h2 {
+      font-size: 2.7rem;
+      font-weight: 900;
+      margin-bottom: 14px;
+      letter-spacing: -1px;
+    }
+    .hero-download-banner p {
+      color: var(--text-secondary);
+      font-size: 1.15rem;
+      max-width: 680px;
+      margin: 0 auto 34px;
+    }
+
+    /* Refined & Clean Obsidian Footer (底部微改：简洁高级) */
+    footer {
+      border-top: 1px solid var(--border-hairline);
+      background: #04060a;
+      padding: 45px 0 35px;
+      color: var(--text-secondary);
+    }
+    .footer-inner-clean {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    .footer-brand-clean {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 1.05rem;
+      font-weight: 800;
+      color: var(--text-white);
+      cursor: pointer;
+    }
+    .footer-nav-clean {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+    }
+    .footer-nav-clean a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: color 0.2s;
+    }
+    .footer-nav-clean a:hover {
+      color: var(--blue);
+    }
+    .footer-sub-clean {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 14px;
+      padding-top: 20px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      font-size: 0.84rem;
+      color: var(--text-tertiary);
+    }
+    .footer-badge-pill {
+      padding: 4px 10px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-hairline);
+      border-radius: 6px;
+      font-size: 0.76rem;
+      font-family: var(--font-mono);
+      color: #94a3b8;
+    }
+
+    @media (max-width: 960px) {
+      .hub-hero h1, .tool-hero-box h1 { font-size: 2.5rem; }
+      .tool-matrix-grid { grid-template-columns: 1fr; }
+      .window-content-split { grid-template-columns: 1fr; }
+      .bento-showcase { grid-template-columns: 1fr; }
+      .bento-tile.col-span-2 { grid-column: span 1; }
+      .nav-links { display: none; }
+      .container { padding: 0 20px; }
+      .footer-inner-clean { flex-direction: column; align-items: flex-start; }
+      .footer-sub-clean { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Viewport Ambient Lights -->
+  <div class="viewport-ambient">
+    <div class="grid-lines"></div>
+    <div class="aurora-top"></div>
+    <div class="aurora-bottom-right"></div>
+  </div>
+
+  <div class="container">
+    <!-- Header Navbar -->
+    <header>
+      <nav class="navbar">
+        <!-- Logo -->
+        <a class="brand-logo" onclick="navigateTo('hub')">
+          <div class="brand-chip-icon"><i class="fa-solid fa-microchip"></i></div>
+          <span>CPU-AI-HUB</span>
+        </a>
+
+        <!-- Links -->
+        <ul class="nav-links">
+          <li><a id="nav-hub" class="nav-item active" onclick="navigateTo('hub')">首页</a></li>
+          <li class="dropdown">
+            <span class="nav-item">
+              产品矩阵 <i class="fa-solid fa-chevron-down" style="font-size: 0.68rem;"></i>
+            </span>
+            <div class="dropdown-menu">
+              <div class="dropdown-content">
+                <div class="dropdown-item" onclick="navigateTo('videonotes')">
+                  <div class="dropdown-icon" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8;">
+                    <i class="fa-solid fa-film"></i>
+                  </div>
+                  <div>
+                    <div style="font-weight: 700; font-size: 0.92rem;">VideoNotes</div>
+                    <div style="font-size: 0.78rem; color: var(--text-secondary);">视频 AI 笔记与本地 ASR 转写</div>
+                  </div>
+                </div>
+                <div class="dropdown-item" onclick="navigateTo('pdfnotes')">
+                  <div class="dropdown-icon" style="background: rgba(244, 63, 94, 0.15); color: #fb7185;">
+                    <i class="fa-solid fa-file-pdf"></i>
+                  </div>
+                  <div>
+                    <div style="font-weight: 700; font-size: 0.92rem;">PDF AI Studio</div>
+                    <div style="font-size: 0.78rem; color: var(--text-secondary);">文献 OCR 与长文档问答</div>
+                  </div>
+                </div>
+                <div class="dropdown-item" onclick="navigateTo('exampaper')">
+                  <div class="dropdown-icon" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24;">
+                    <i class="fa-solid fa-graduation-cap"></i>
+                  </div>
+                  <div>
+                    <div style="font-weight: 700; font-size: 0.92rem;">ExamPaper AI</div>
+                    <div style="font-size: 0.78rem; color: var(--text-secondary);">试卷自动切题与错题本提炼</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </li>
+          <li><a class="nav-item" onclick="navigateTo('hub')#offline-philosophy">CPU 离线理念</a></li>
+          <li><a class="nav-item" href="https://github.com" target="_blank"><i class="fa-brands fa-github"></i> 开源文档</a></li>
+        </ul>
+
+        <!-- Right Badge -->
+        <div>
+          <span class="badge-count" onclick="navigateTo('hub')">
+            <i class="fa-solid fa-layer-group" style="color: var(--blue);"></i> 6 款独立工具
+          </span>
+        </div>
+      </nav>
+    </header>
+
+    <!-- ==================================================== -->
+    <!-- VIEW 1: CPU-AI-HUB 首页 (Tool Marketplace Hub)       -->
+    <!-- ==================================================== -->
+    <main id="view-hub" class="view-page active-view">
+      <!-- Hub Hero -->
+      <section class="hub-hero">
+        <div class="hero-pill-badge">
+          <span class="pulse-dot"></span>
+          <i class="fa-solid fa-microchip"></i> 无需独立显卡 · 直接通过 CPU 稳定运行
+        </div>
+        <h1>适配 CPU 的 <span class="text-aurora">纯本地 AI 桌面工具矩阵</span></h1>
+        <p>
+          无需昂贵显卡，拒绝云端上传。基于底层指令集与轻量模型优化，通过 CPU 稳定驱动每一款本地 AI 生产力工具，永久保障数据隐私与安全。
+        </p>
+
+        <!-- Trust Badges -->
+        <div class="hero-trust-bar">
+          <div class="trust-chip"><i class="fa-solid fa-circle-check"></i> CPU 稳定离线运行</div>
+          <div class="trust-chip"><i class="fa-solid fa-circle-check"></i> 100% 离线免联网</div>
+          <div class="trust-chip"><i class="fa-solid fa-circle-check"></i> 零数据上传与隐私泄露</div>
+          <div class="trust-chip"><i class="fa-solid fa-circle-check"></i> 永久免费单机可用</div>
+        </div>
+
+        <!-- Command Search & Category Control Center -->
+        <div class="filter-control-center">
+          <div class="search-bar-wrap">
+            <i class="fa-solid fa-magnifying-glass search-icon"></i>
+            <input type="text" placeholder="快速检索工具与功能（如：视频转写、PDF 问答、试卷切题、音频降噪、公式识别...）" oninput="searchTools(this.value)" />
+            <span class="search-badge-hint"><i class="fa-solid fa-bolt"></i> 实时过滤</span>
+          </div>
+          <div class="filter-tabs-row">
+            <div class="tab-pill active" onclick="filterCategory('all', this)"><i class="fa-solid fa-layer-group"></i> 全部工具 (6)</div>
+            <div class="tab-pill" onclick="filterCategory('media', this)"><i class="fa-solid fa-film"></i> 音视频 (3)</div>
+            <div class="tab-pill" onclick="filterCategory('doc', this)"><i class="fa-solid fa-file-lines"></i> 文档研报 (1)</div>
+            <div class="tab-pill" onclick="filterCategory('study', this)"><i class="fa-solid fa-graduation-cap"></i> 学习备考 (2)</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tool Matrix Grid -->
+      <section class="tool-matrix-grid">
+        <!-- Card 1: VideoNotes -->
+        <div class="matrix-card" data-cat="media" onclick="navigateTo('videonotes')">
+          <div>
+            <div class="matrix-card-top">
+              <div class="tool-icon-wrapper icon-video"><i class="fa-solid fa-film"></i></div>
+              <span class="status-capsule capsule-ready"><i class="fa-solid fa-check"></i> 已就绪 · v0.1.43</span>
+            </div>
+            <h3>VideoNotes</h3>
+            <p>音视频 AI 笔记与转写工具。内置 Fun-ASR 本地大模型与标点对齐，单机稳定生成结构化时间轴笔记与双语对照。</p>
+            
+            <div class="card-preview-strip">
+              <i class="fa-solid fa-microchip"></i> CPU AVX2 优化 · Fun-ASR GGUF · Sherpa 标点
+            </div>
+
+            <ul class="matrix-features">
+              <li><i class="fa-solid fa-check"></i> 通过 CPU 即可稳定完成长音频离线转写</li>
+              <li><i class="fa-solid fa-check"></i> CT-Transformer 智能标点与停顿修复</li>
+              <li><i class="fa-solid fa-check"></i> 抖音/B站/YouTube 视频链接一键离线解析</li>
+            </ul>
+          </div>
+          <div class="matrix-card-footer">
+            <span class="btn-card-link">进入专属详情页 <i class="fa-solid fa-arrow-right"></i></span>
+            <span class="btn-action-sm"><i class="fa-brands fa-windows"></i> 免费下载</span>
+          </div>
+        </div>
+
+        <!-- Card 2: PDF AI Studio -->
+        <div class="matrix-card" data-cat="doc" onclick="navigateTo('pdfnotes')">
+          <div>
+            <div class="matrix-card-top">
+              <div class="tool-icon-wrapper icon-pdf"><i class="fa-solid fa-file-pdf"></i></div>
+              <span class="status-capsule capsule-beta"><i class="fa-solid fa-flask"></i> 封闭内测中</span>
+            </div>
+            <h3>PDF AI Studio</h3>
+            <p>本地文献研报智能工作台。支持长文档离线问答、复杂双栏扫描件 OCR 识别、嵌套表格提取为 Excel。</p>
+            
+            <div class="card-preview-strip">
+              <i class="fa-solid fa-microchip"></i> 轻量嵌入向量模型 · CPU 离线建立语义索引
+            </div>
+
+            <ul class="matrix-features">
+              <li><i class="fa-solid fa-check"></i> 保密商业合同与论文永不上传第三方</li>
+              <li><i class="fa-solid fa-check"></i> 印刷体/手写扫描件高精 OCR 排版还原</li>
+              <li><i class="fa-solid fa-check"></i> 多篇论文跨文献核心观点对比归纳</li>
+            </ul>
+          </div>
+          <div class="matrix-card-footer">
+            <span class="btn-card-link">进入专属详情页 <i class="fa-solid fa-arrow-right"></i></span>
+            <span class="btn-action-sm" style="border-color: rgba(244,63,94,0.35);"><i class="fa-regular fa-bell"></i> 预约内测</span>
+          </div>
+        </div>
+
+        <!-- Card 3: ExamPaper AI -->
+        <div class="matrix-card" data-cat="study" onclick="navigateTo('exampaper')">
+          <div>
+            <div class="matrix-card-top">
+              <div class="tool-icon-wrapper icon-exam"><i class="fa-solid fa-graduation-cap"></i></div>
+              <span class="status-capsule capsule-dev"><i class="fa-solid fa-code"></i> 核心开发中</span>
+            </div>
+            <h3>ExamPaper AI</h3>
+            <p>试卷与错题智能解析系统。自动试卷版面切题、手写笔迹消除还原空白卷、公式 LaTeX 化与错题本生成。</p>
+            
+            <div class="card-preview-strip">
+              <i class="fa-solid fa-microchip"></i> CPU 快速版面分析 · 字迹剥离 · LaTeX 识别
+            </div>
+
+            <ul class="matrix-features">
+              <li><i class="fa-solid fa-check"></i> 智能题目自动分割，按题型归类题库</li>
+              <li><i class="fa-solid fa-check"></i> 消除做题红笔铅笔痕迹，一键还原新卷</li>
+              <li><i class="fa-solid fa-check"></i> 复杂数理化公式直接转标准 LaTeX 代码</li>
+            </ul>
+          </div>
+          <div class="matrix-card-footer">
+            <span class="btn-card-link">进入专属详情页 <i class="fa-solid fa-arrow-right"></i></span>
+            <span class="btn-action-sm" style="border-color: rgba(245,158,11,0.35);"><i class="fa-regular fa-bell"></i> 关注进度</span>
+          </div>
+        </div>
+
+        <!-- Card 4: AudioClean AI -->
+        <div class="matrix-card" data-cat="media">
+          <div>
+            <div class="matrix-card-top">
+              <div class="tool-icon-wrapper icon-audio"><i class="fa-solid fa-sliders"></i></div>
+              <span class="status-capsule capsule-dev">规划中</span>
+            </div>
+            <h3>AudioClean AI</h3>
+            <p>本地人声伴奏分离与深度降噪。基于轻量优化算法，单机离线去除环境底噪与复杂背景音乐。</p>
+            <ul class="matrix-features">
+              <li><i class="fa-solid fa-check"></i> 纯净提取说话人人声，转写准确率大幅提升</li>
+              <li><i class="fa-solid fa-check"></i> 实时消除户外风噪、电流杂音与环境回声</li>
+              <li><i class="fa-solid fa-check"></i> 支持 32-bit Float 广播级无损音质输出</li>
+            </ul>
+          </div>
+          <div class="matrix-card-footer">
+            <span style="color: var(--text-tertiary); font-size: 0.88rem; font-weight: 600;">敬请期待</span>
+            <span style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 6px;">Roadmap</span>
+          </div>
+        </div>
+
+        <!-- Card 5: MathSniper -->
+        <div class="matrix-card" data-cat="study">
+          <div>
+            <div class="matrix-card-top">
+              <div class="tool-icon-wrapper icon-ocr"><i class="fa-solid fa-square-root-variable"></i></div>
+              <span class="status-capsule capsule-dev">规划中</span>
+            </div>
+            <h3>MathSniper</h3>
+            <p>截图式数理公式与化学式转 LaTeX 工具。全局快捷键单机离线识别，无缝粘贴进 Word 或 Typora。</p>
+            <ul class="matrix-features">
+              <li><i class="fa-solid fa-check"></i> 全局划词截图，本地 CPU 快速解析</li>
+              <li><i class="fa-solid fa-check"></i> 精准识别微积分、多行矩阵与化学分子式</li>
+              <li><i class="fa-solid fa-check"></i> 输出标准 LaTeX、MathML 与 MathType</li>
+            </ul>
+          </div>
+          <div class="matrix-card-footer">
+            <span style="color: var(--text-tertiary); font-size: 0.88rem; font-weight: 600;">敬请期待</span>
+            <span style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 6px;">Roadmap</span>
+          </div>
+        </div>
+
+        <!-- Card 6: ClipSlicer -->
+        <div class="matrix-card" data-cat="media">
+          <div>
+            <div class="matrix-card-top">
+              <div class="tool-icon-wrapper icon-clip"><i class="fa-solid fa-scissors"></i></div>
+              <span class="status-capsule capsule-dev">规划中</span>
+            </div>
+            <h3>ClipSlicer</h3>
+            <p>长视频智能金句要点高光切片机。根据文本转写与 AI 摘要，一键自动无损导出短视频片段与硬字幕。</p>
+            <ul class="matrix-features">
+              <li><i class="fa-solid fa-check"></i> 基于时间戳快速无损流复制切片</li>
+              <li><i class="fa-solid fa-check"></i> 一键批量压制双语字幕与样式</li>
+              <li><i class="fa-solid fa-check"></i> 适合内容创作者快速提炼金句切片</li>
+            </ul>
+          </div>
+          <div class="matrix-card-footer">
+            <span style="color: var(--text-tertiary); font-size: 0.88rem; font-weight: 600;">敬请期待</span>
+            <span style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 6px;">Roadmap</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Comparison Section -->
+      <section class="comparison-wrapper" id="offline-philosophy">
+        <div class="comparison-head">
+          <h3>为什么选择 CPU-AI-HUB 纯本地 CPU 方案？</h3>
+          <span style="font-size: 0.84rem; color: var(--text-secondary);"><i class="fa-solid fa-microchip"></i> 务实可行 · 隐私第一原则</span>
+        </div>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>核心维度</th>
+              <th class="col-highlight">CPU-AI-HUB 桌面工具矩阵 (本地 CPU 方案)</th>
+              <th>传统云端 AI / 依赖昂贵 GPU 方案</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>硬件门槛与显卡成本</strong></td>
+              <td class="col-highlight"><i class="fa-solid fa-circle-check" style="color: var(--emerald);"></i> 通过 CPU 即可稳定运行，无需独立显卡</td>
+              <td style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark" style="color: var(--rose);"></i> 动辄要求万元级大显存 GPU 或昂贵云端算力</td>
+            </tr>
+            <tr>
+              <td><strong>数据私密性</strong></td>
+              <td class="col-highlight"><i class="fa-solid fa-circle-check" style="color: var(--emerald);"></i> 100% 留在用户本地，永不向云端发送</td>
+              <td style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark" style="color: var(--rose);"></i> 音视频、敏感文档必须上传第三方服务器</td>
+            </tr>
+            <tr>
+              <td><strong>费用透明度</strong></td>
+              <td class="col-highlight"><i class="fa-solid fa-circle-check" style="color: var(--emerald);"></i> 下载即可离线使用，无隐形扣费与 Token 限制</td>
+              <td style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark" style="color: var(--rose);"></i> 按分钟/按页计费，包月订阅昂贵</td>
+            </tr>
+            <tr>
+              <td><strong>网络适应力</strong></td>
+              <td class="col-highlight"><i class="fa-solid fa-circle-check" style="color: var(--emerald);"></i> 飞机、高铁、离线实验室随时流畅运行</td>
+              <td style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark" style="color: var(--rose);"></i> 弱网、断网环境下软件完全瘫痪</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+
+    <!-- ==================================================== -->
+    <!-- VIEW 2: VideoNotes 专属独立产品介绍与下载页面           -->
+    <!-- ==================================================== -->
+    <main id="view-videonotes" class="view-page">
+      <section class="tool-hero-box">
+        <div class="btn-back-pill" onclick="navigateTo('hub')">
+          <i class="fa-solid fa-arrow-left"></i> 返回首页
+        </div>
+        <h1>VideoNotes<br /><span style="color: var(--blue);">把任意视频转化为结构化笔记</span></h1>
+        <p>
+          适配 CPU 的 Fun-ASR-Nano 离线大模型与 Sherpa-ONNX 标点停顿对齐，通过 CPU 即可稳定后台转写，一键提炼结构化摘要与双语对照。
+        </p>
+
+        <div class="tool-cta-group">
+          <a href="#" class="btn-primary-dl">
+            <i class="fa-brands fa-windows"></i> 免费下载 Windows 版 (.exe)
+          </a>
+          <a href="#" class="btn-secondary-dl">
+            <i class="fa-solid fa-file-zipper"></i> 免安装绿色便携版 (.zip)
+          </a>
+        </div>
+      </section>
+
+      <!-- VideoNotes Interactive Mockup -->
+      <div class="app-window-frame">
+        <div class="window-titlebar">
+          <div class="window-dots">
+            <div class="dot-ctrl dot-close"></div>
+            <div class="dot-ctrl dot-min"></div>
+            <div class="dot-ctrl dot-max"></div>
+          </div>
+          <div class="window-title-text">
+            <i class="fa-solid fa-film"></i> Keynote_Speech_2026.mp4 (CPU 离线转写完成)
+          </div>
+          <div style="font-size: 0.8rem; color: var(--emerald); font-weight: 700;">
+            <i class="fa-solid fa-circle-check"></i> 100% 离线运行 · 适配 CPU 运行
+          </div>
+        </div>
+
+        <div class="window-content-split">
+          <div class="split-pane-left">
+            <div class="video-viewport">
+              <div class="play-orb" onclick="togglePlay(this)">
+                <i class="fa-solid fa-play" id="playIcon"></i>
+              </div>
+            </div>
+
+            <div class="waveform-widget">
+              <div class="waveform-meta-row">
+                <span><i class="fa-solid fa-wave-square"></i> FSMN-VAD 语音活动检测</span>
+                <span style="color: var(--blue);">16000Hz 16-bit Mono</span>
+              </div>
+              <div class="wave-visual-bars">
+                <div class="wave-column active"></div>
+                <div class="wave-column active"></div>
+                <div class="wave-column active"></div>
+                <div class="wave-column active"></div>
+                <div class="wave-column active"></div>
+                <div class="wave-column active"></div>
+                <div class="wave-column"></div>
+                <div class="wave-column active"></div>
+                <div class="wave-column active"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="split-pane-right">
+            <div class="pane-tabs">
+              <div class="pane-tab active"><i class="fa-solid fa-list"></i> 时间轴转写 (带标点)</div>
+              <div class="pane-tab"><i class="fa-solid fa-wand-magic-sparkles"></i> AI 结构化总结</div>
+              <div class="pane-tab"><i class="fa-brands fa-markdown"></i> Markdown 预览</div>
+            </div>
+
+            <div class="transcript-flow">
+              <div class="transcript-bubble highlight">
+                <div class="bubble-timestamp">00:03.20 - 00:08.50 · 讲者 A</div>
+                <div class="bubble-zh">今天我们重点讨论如何在纯本地环境下，利用 CPU 与量化模型完成高质量的语音转写。</div>
+                <div class="bubble-en">Today we focus on achieving reliable offline ASR on CPU.</div>
+              </div>
+
+              <div class="transcript-bubble">
+                <div class="bubble-timestamp">00:08.65 - 00:15.10 · 讲者 A</div>
+                <div class="bubble-zh">相比依赖独立显卡或云端 API，直接适配 CPU，运行稳定，而且完全无需担心隐私泄露或断网。</div>
+                <div class="bubble-en">Optimized for CPU, accessible with zero privacy risks.</div>
+              </div>
+
+              <div class="transcript-bubble">
+                <div class="bubble-timestamp">00:15.30 - 00:22.40 · 讲者 B</div>
+                <div class="bubble-zh">同时我们配合 Sherpa 标点切分与 CTC 对齐，自动给每一句话补全标点符号并对齐时间戳。</div>
+                <div class="bubble-en">With Sherpa punctuation and CTC alignment, sentences are accurately punctuated and aligned.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bento Grid for VideoNotes -->
+      <div class="bento-showcase">
+        <div class="bento-tile col-span-2">
+          <h4><i class="fa-solid fa-microchip" style="color: var(--blue);"></i> Fun-ASR-Nano CPU 优化引擎</h4>
+          <p>内置量化版 Qwen3 0.6B 与 F16 语音特征编码器，基于优化版 llama.cpp C++ 原生引擎，充分调用 CPU AVX2/FMA 多核心指令集，通过 CPU 即可稳定完成转写（若配备 GPU 也可自动调用加速）。</p>
+        </div>
+        <div class="bento-tile">
+          <h4><i class="fa-solid fa-align-left" style="color: var(--emerald);"></i> Sherpa-ONNX 标点对齐</h4>
+          <p>自动恢复逗号、句号与问号，结合 CTC 算法修复说话人真实停顿，告别机械长句，输出自然流畅笔记。</p>
+        </div>
+        <div class="bento-tile">
+          <h4><i class="fa-solid fa-cloud-arrow-down" style="color: var(--purple);"></i> 全网音视频提取与解析</h4>
+          <p>内置 yt-dlp 与智能 Cookie 探针，支持一键抓取 YouTube、抖音、B 站视频进行离线分析。</p>
+        </div>
+        <div class="bento-tile col-span-2">
+          <h4><i class="fa-brands fa-markdown" style="color: var(--amber);"></i> 一键导出 Markdown 结构化笔记</h4>
+          <p>自动提炼核心议题、关键行动项（Action Items）与要点纪要，无缝兼容 Notion 与 Obsidian 等主流笔记软件。</p>
+        </div>
+      </div>
+
+      <!-- Download Banner -->
+      <div class="hero-download-banner">
+        <h2>立即开始体验纯本地 VideoNotes</h2>
+        <p>无需独立显卡，Windows 10/11 电脑（支持 CPU AVX2 指令集）开箱即用。</p>
+        <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
+          <a href="#" class="btn-primary-dl" style="font-size: 1.12rem; padding: 16px 40px;"><i class="fa-brands fa-windows"></i> 免费下载 Windows 安装包</a>
+          <a href="#" class="btn-secondary-dl"><i class="fa-solid fa-file-zipper"></i> 免安装便携版</a>
+        </div>
+      </div>
+    </main>
+
+    <!-- ==================================================== -->
+    <!-- VIEW 3: PDF AI Studio 专属独立产品介绍页面               -->
+    <!-- ==================================================== -->
+    <main id="view-pdfnotes" class="view-page">
+      <section class="tool-hero-box">
+        <div class="btn-back-pill" onclick="navigateTo('hub')">
+          <i class="fa-solid fa-arrow-left"></i> 返回首页
+        </div>
+        <h1>PDF AI Studio<br /><span style="color: var(--rose);">本地文献与研报智能解析工作台</span></h1>
+        <p>
+          专为低算力设备优化的轻量模型。100% 离线长文档问答、复杂排版扫描件 OCR 识别、嵌套表格提取为 Excel。
+        </p>
+
+        <div class="tool-cta-group">
+          <a href="#" class="btn-primary-dl" style="background: var(--rose); box-shadow: 0 0 30px rgba(244, 63, 94, 0.45);">
+            <i class="fa-regular fa-bell"></i> 预约封闭内测资格
+          </a>
+        </div>
+      </section>
+
+      <div class="bento-showcase">
+        <div class="bento-tile col-span-2">
+          <h4><i class="fa-solid fa-book-open" style="color: var(--rose);"></i> 100% 本地文档深度 RAG 问答</h4>
+          <p>无需将保密商业合同、论文文献上传云端。本地轻量向量模型在 CPU 上稳定建立语义索引，支持跨章节精确定位溯源。</p>
+        </div>
+        <div class="bento-tile">
+          <h4><i class="fa-solid fa-table" style="color: var(--amber);"></i> 复杂表格无损还原</h4>
+          <p>精准识别跨页、多层嵌套合并单元格，一键转换为标准的 Markdown 表格或导出为 Excel (.xlsx)。</p>
+        </div>
+      </div>
+    </main>
+
+    <!-- ==================================================== -->
+    <!-- VIEW 4: ExamPaper AI 试卷解析专属独立页面               -->
+    <!-- ==================================================== -->
+    <main id="view-exampaper" class="view-page">
+      <section class="tool-hero-box">
+        <div class="btn-back-pill" onclick="navigateTo('hub')">
+          <i class="fa-solid fa-arrow-left"></i> 返回首页
+        </div>
+        <h1>ExamPaper AI<br /><span style="color: var(--amber);">试卷智能切题与错题本提炼系统</span></h1>
+        <p>
+          单机离线稳定运行。试卷版面深度切分、手写做题笔迹一键消除、数学物理公式精准转 LaTeX。
+        </p>
+
+        <div class="tool-cta-group">
+          <a href="#" class="btn-primary-dl" style="background: var(--amber); color: #06080d; box-shadow: 0 0 30px rgba(245, 158, 11, 0.45);">
+            <i class="fa-regular fa-bell"></i> 关注开发进度与获取尝鲜版
+          </a>
+        </div>
+      </section>
+
+      <div class="bento-showcase">
+        <div class="bento-tile">
+          <h4><i class="fa-solid fa-eraser" style="color: var(--rose);"></i> 智能手写字迹清除</h4>
+          <p>利用轻量深度图像分割算法，精准剥离试卷上的红笔批改与铅笔笔迹，一键还原崭新高清空白卷。</p>
+        </div>
+        <div class="bento-tile col-span-2">
+          <h4><i class="fa-solid fa-square-root-variable" style="color: var(--blue);"></i> 数理化公式 LaTeX 转化</h4>
+          <p>复杂微积分、多行矩阵、化学分子式自动识别并转化为标准 LaTeX 源码，直接粘贴进 Word 或题库系统。</p>
+        </div>
+      </div>
+    </main>
+
+    <!-- Refined, Clean Obsidian Footer (简洁高级微改版) -->
+    <footer>
+      <div class="footer-inner-clean">
+        <div class="footer-brand-clean" onclick="navigateTo('hub')">
+          <div class="brand-chip-icon" style="width: 28px; height: 28px; font-size: 0.85rem;"><i class="fa-solid fa-microchip"></i></div>
+          <span>CPU-AI-HUB</span>
+        </div>
+        <div class="footer-nav-clean">
+          <a onclick="navigateTo('hub')">首页</a>
+          <a onclick="navigateTo('videonotes')">VideoNotes</a>
+          <a onclick="navigateTo('pdfnotes')">PDF AI Studio</a>
+          <a onclick="navigateTo('exampaper')">ExamPaper AI</a>
+          <a onclick="navigateTo('hub')#offline-philosophy">CPU 离线理念</a>
+        </div>
+      </div>
+      <div class="footer-sub-clean">
+        <div>
+          © 2026 CPU-AI-HUB. 100% 本地离线运行 · 适配 CPU · 极致单机隐私安全
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <span class="footer-badge-pill"><i class="fa-brands fa-windows"></i> Win 10/11 64-bit</span>
+          <span class="footer-badge-pill"><i class="fa-solid fa-microchip"></i> AVX2 Ready</span>
+          <span class="footer-badge-pill"><i class="fa-solid fa-shield-halved"></i> Zero Cloud</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    // Navigation Router
+    function navigateTo(pageId) {
+      document.querySelectorAll('.view-page').forEach(page => page.classList.remove('active-view'));
+      const target = document.getElementById('view-' + pageId);
+      if (target) {
+        target.classList.add('active-view');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+
+      // Update active state in nav
+      document.querySelectorAll('.nav-links a').forEach(a => a.classList.remove('active'));
+      const navItem = document.getElementById('nav-' + pageId);
+      if (navItem) navItem.classList.add('active');
+    }
+
+    // Filter tools in Hub
+    function filterCategory(category, tab) {
+      document.querySelectorAll('.tab-pill').forEach(c => c.classList.remove('active'));
+      tab.classList.add('active');
+
+      const cards = document.querySelectorAll('.matrix-card');
+      cards.forEach(card => {
+        const cat = card.getAttribute('data-cat');
+        if (category === 'all' || cat === category) {
+          card.style.display = 'flex';
+        } else {
+          card.style.display = 'none';
+        }
+      });
+    }
+
+    // Search tools in Hub
+    function searchTools(query) {
+      const q = query.toLowerCase().trim();
+      const cards = document.querySelectorAll('.matrix-card');
+      cards.forEach(card => {
+        const text = card.innerText.toLowerCase();
+        if (!q || text.includes(q)) {
+          card.style.display = 'flex';
+        } else {
+          card.style.display = 'none';
+        }
+      });
+    }
+
+    // Video play toggle
+    function togglePlay(btn) {
+      const icon = document.getElementById('playIcon');
+      if (icon.classList.contains('fa-play')) {
+        icon.classList.remove('fa-play');
+        icon.classList.add('fa-pause');
+      } else {
+        icon.classList.remove('fa-pause');
+        icon.classList.add('fa-play');
+      }
+    }
+  </script>
+</body>
+</html>

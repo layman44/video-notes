@@ -124,7 +124,6 @@ fn sentence_boundary_candidates(text: &str, profile: LanguageProfile) -> Vec<usi
 fn is_real_sentence_terminal(chars: &[char], punct_start: usize, punct_end: usize, profile: LanguageProfile) -> bool {
     let mark = chars[punct_start];
     let prev_word = previous_word(chars, punct_start).to_ascii_lowercase();
-    let next_word = next_word(chars, punct_end).to_ascii_lowercase();
 
     // Numeric decimal / version: 3.5, 130.1, 2.0.1.
     // Do not inspect the whole surrounding "word" here: in CJK text,
@@ -179,18 +178,6 @@ fn previous_word(chars: &[char], before: usize) -> String {
     let mut start = end;
     while start > 0 && (chars[start - 1].is_alphanumeric() || matches!(chars[start - 1], '\'' | '_' | '-')) {
         start -= 1;
-    }
-    chars[start..end].iter().collect()
-}
-
-fn next_word(chars: &[char], after: usize) -> String {
-    let mut start = after;
-    while start < chars.len() && (chars[start].is_whitespace() || matches!(chars[start], '"' | '\'' | '“' | '‘' | '(' | '[' | '【')) {
-        start += 1;
-    }
-    let mut end = start;
-    while end < chars.len() && (chars[end].is_alphanumeric() || matches!(chars[end], '\'' | '_' | '-')) {
-        end += 1;
     }
     chars[start..end].iter().collect()
 }

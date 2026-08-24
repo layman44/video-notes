@@ -84,6 +84,8 @@ pub struct AsrPhaseEvent {
 #[serde(rename_all = "camelCase")]
 pub struct AsrSnapshot {
     pub job_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
     pub segments: Vec<TranscriptSegment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
@@ -367,16 +369,28 @@ pub async fn transcribe_job(
     _model_data_dir: &Path,
     task_data_dir: &Path,
     job_id: &str,
+    backend: &str,
+    asr_config_json: Option<&str>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<TranscriptResult, String> {
     media::validate_job_id(job_id)?;
 
-    let status = native_manager::status(app, &NativeModelRequest { model_kind: "nano".to_string() })?;
-    if !status.ready {
-        return Err(format!(
-            "MODEL_NOT_INSTALLED:请先到“模型”页面下载 {MODEL_NAME}（缺少{}）",
-            status.missing.join("、")
-        ));
+    let is_moss = backend == crate::openasr::MODEL_ID || backend == "openasr-moss-q4";
+    let expected_model_id = if is_moss { crate::openasr::MODEL_ID } else { DEFAULT_MODEL_ID };
+    let native_status = if is_moss {
+        None
+    } else {
+        let status = native_manager::status(app, &NativeModelRequest { model_kind: "nano".to_string() })?;
+        if !status.ready {
+            return Err(format!(
+                "MODEL_NOT_INSTALLED:请先到“模型”页面下载 {MODEL_NAME}（缺少{}）",
+                status.missing.join("、")
+            ));
+        }
+        Some(status)
+    };
+    if is_moss {
+        let _ = crate::openasr::model_is_ready(app)?;
     }
     let task_dir = task_data_dir.join("tasks").join(job_id);
     let transcript_dir = task_dir.join("transcript");
@@ -391,7 +405,7 @@ pub async fn transcribe_job(
             && transcript_dir.join("log.txt").is_file();
         if pipeline_current {
             if let Ok(cached) = load_transcript(task_data_dir, job_id) {
-                if cached.model_id == DEFAULT_MODEL_ID {
+                if cached.model_id == expected_model_id {
                     emit_asr_phase(app, job_id, "standardization", "completed", "已复用当前版本本地转录结果");
                     return Ok(cached);
                 }
@@ -401,14 +415,30 @@ pub async fn transcribe_job(
         }
     }
 
+    // Once a new backend run is actually starting, remove the previous transcript
+    // workspace. This prevents a failed retry from being mistaken for a completed
+    // result by startup reconciliation.
+    if transcript_dir.is_dir() {
+        fs::remove_dir_all(&transcript_dir)
+            .map_err(|error| format!("无法替换旧的转录结果：{error}"))?;
+    }
     fs::create_dir_all(&transcript_dir)
         .map_err(|e| format!("无法创建转录目录：{e}"))?;
+    // Translation and notes are derived from the Standard transcript.  A real
+    // re-run invalidates them immediately so downstream actions cannot combine
+    // artifacts from the previous ASR backend with the new result.
+    for derived_dir in [task_dir.join("translation"), task_dir.join("note")] {
+        if derived_dir.is_dir() {
+            fs::remove_dir_all(&derived_dir)
+                .map_err(|error| format!("无法清理旧的派生结果：{error}"))?;
+        }
+    }
     let verification_debug_log_path = transcript_dir.join("log.txt");
     let _ = fs::write(
         &verification_debug_log_path,
         format!(
             "VideoNotes selective verification diagnostic\npipeline={} (v2.7.0 semantic-boundary + stable-id translation)\njob={}\nmodel={}\n\n",
-            crate::transcript::storage::CURRENT_PIPELINE_VERSION, job_id, DEFAULT_MODEL_ID,
+            crate::transcript::storage::CURRENT_PIPELINE_VERSION, job_id, expected_model_id,
         ),
     );
     append_verification_debug(&verification_debug_log_path, "ASR-BEGIN", "starting fresh diagnostic transcription run");
@@ -430,16 +460,24 @@ pub async fn transcribe_job(
     let sys = sysinfo::System::new_all();
     let thread_count = (sys.cpus().len()).clamp(1, 8);
 
+    let moss_config = asr_config_json
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .unwrap_or_else(|| serde_json::json!({"chunkSeconds": 30.0, "overlapSeconds": 1.0}));
     let config = AsrConfig {
+        backend: if is_moss { "openasr-moss-q4".to_string() } else { "funasr-nano".to_string() },
         funasr_mode: "nano".to_string(),
-        funasr_runtime_path: status.paths.runtime_path,
-        funasr_model_path: status.paths.model_path,
-        funasr_encoder_model_path: status.paths.encoder_model_path,
-        funasr_vad_model_path: status.paths.vad_model_path,
-        punctuation_runtime_path: status.paths.punctuation_runtime_path,
-        punctuation_model_path: status.paths.punctuation_model_path,
-        alignment_model_path: status.paths.alignment_model_path,
-        alignment_tokens_path: status.paths.alignment_tokens_path,
+        funasr_runtime_path: native_status.as_ref().map(|s| s.paths.runtime_path.clone()).unwrap_or_default(),
+        funasr_model_path: native_status.as_ref().map(|s| s.paths.model_path.clone()).unwrap_or_default(),
+        funasr_encoder_model_path: native_status.as_ref().map(|s| s.paths.encoder_model_path.clone()).unwrap_or_default(),
+        funasr_vad_model_path: native_status.as_ref().map(|s| s.paths.vad_model_path.clone()).unwrap_or_default(),
+        punctuation_runtime_path: native_status.as_ref().map(|s| s.paths.punctuation_runtime_path.clone()).unwrap_or_default(),
+        punctuation_model_path: native_status.as_ref().map(|s| s.paths.punctuation_model_path.clone()).unwrap_or_default(),
+        alignment_model_path: native_status.as_ref().map(|s| s.paths.alignment_model_path.clone()).unwrap_or_default(),
+        alignment_tokens_path: native_status.as_ref().map(|s| s.paths.alignment_tokens_path.clone()).unwrap_or_default(),
+        openasr_runtime_path: if is_moss { crate::openasr::model_is_ready(app)?.0.to_string_lossy().into_owned() } else { String::new() },
+        openasr_model_path: if is_moss { crate::openasr::model_is_ready(app)?.1.to_string_lossy().into_owned() } else { String::new() },
+        moss_chunk_seconds: moss_config.get("chunkSeconds").and_then(|v| v.as_f64()).unwrap_or(30.0),
+        moss_overlap_seconds: moss_config.get("overlapSeconds").and_then(|v| v.as_f64()).unwrap_or(1.0),
         verification_debug_log_path: verification_debug_log_path.to_string_lossy().into_owned(),
         funasr_chunk_seconds: 15.0,
         ffmpeg_path: media_tools.ffmpeg.to_string_lossy().into_owned(),
@@ -450,7 +488,7 @@ pub async fn transcribe_job(
     append_verification_debug(
         &verification_debug_log_path,
         "MODEL-STATUS",
-        format!("nanoReady={} verifier=expanded-nano+surface-retry", status.ready),
+        format!("backend={} modelReady={} verifier=expanded-nano+surface-retry", backend, native_status.as_ref().map(|s| s.ready).unwrap_or(is_moss)),
     );
 
     // Keep an immutable copy for the post-ASR alignment layer. The transcriber owns its request.
@@ -502,9 +540,9 @@ pub async fn transcribe_job(
                     );
                 }
                 TranscriptionEvent::Snapshot { segments, language, processed_until } => {
-                    // Publish the model's Raw timeline independently from the derived Standard
-                    // timeline. The UI can therefore keep "原始" immutable in meaning while
-                    // "校正（标准）" evolves through the Canonical pipeline.
+                    // Snapshots are deliberately Raw-only. Standard is a derived view and must
+                    // not be shown until the complete Raw revision has passed the canonical
+                    // pipeline and has been persisted successfully.
                     let raw_snapshot_segments = segments
                         .iter()
                         .enumerate()
@@ -522,6 +560,7 @@ pub async fn transcribe_job(
                         .collect();
                     let raw_payload = AsrSnapshot {
                         job_id: job_id_event.clone(),
+                        model_id: Some(expected_model_id.to_string()),
                         segments: raw_snapshot_segments,
                         language: language.clone(),
                         processed_until,
@@ -530,82 +569,10 @@ pub async fn transcribe_job(
                         provisional: Some(true),
                     };
                     let _ = app_event.emit("asr-snapshot", raw_payload);
-
-                    // Standard uses the same Canonical pipeline as the final result. At this
-                    // point we do not have the full CTC timeline yet, so finalization may refine
-                    // boundaries and verified text without ever clearing the visible transcript.
-                    let provisional_raw = crate::transcript::model::RawTranscript {
-                        job_id: job_id_event.clone(),
-                        metadata: crate::transcript::model::AsrMetadata {
-                            pipeline_version: crate::transcript::storage::CURRENT_PIPELINE_VERSION.to_string(),
-                            asr_backend: "funasr-provisional".to_string(),
-                            asr_model_version: Some(DEFAULT_MODEL_ID.to_string()),
-                            created_at: "provisional".to_string(),
-                            source_audio_hash: None,
-                            raw_revision_id: None,
-                            raw_content_hash: None,
-                        },
-                        language: language.clone(),
-                        segments: segments
-                            .into_iter()
-                            .map(|s| crate::transcript::model::RawSegment {
-                                id: s.id,
-                                start_ms: (s.start * 1000.0).round() as u64,
-                                end_ms: (s.end * 1000.0).round() as u64,
-                                text: s.text,
-                                tokens: Vec::new(),
-                            })
-                            .collect(),
-                    };
-                    let provisional_config = crate::transcript::pipeline::PipelineConfig {
-                        is_english_audio: is_english_language(language.as_deref().unwrap_or_default()),
-                        boundary_evidence: Vec::new(),
-                        punctuation_repairs: Vec::new(),
-                        verification_rewrites: Vec::new(),
-                        surface_repairs: Vec::new(),
-                        bridge_rewrites: Vec::new(),
-                    };
-                    let (provisional_canonical, _) = crate::transcript::pipeline::run_canonical_pipeline(
-                        &provisional_raw,
-                        &provisional_config,
-                    );
-                    let mapped_segments = crate::transcript::views::render_standard_view(&provisional_canonical)
-                        .into_iter()
-                        .enumerate()
-                        .map(|(idx, s)| TranscriptSegment {
-                            id: s.id,
-                            chunk_index: idx,
-                            start: s.start_ms as f64 / 1000.0,
-                            end: s.end_ms as f64 / 1000.0,
-                            start_ms: s.start_ms,
-                            end_ms: s.end_ms,
-                            text: s.text,
-                            translated_text: None,
-                            avg_confidence: None,
-                        })
-                        .collect();
-                    let payload = AsrSnapshot {
-                        job_id: job_id_event.clone(),
-                        segments: mapped_segments,
-                        language,
-                        processed_until,
-                        pause_repairs: None,
-                        view: Some("standard".into()),
-                        provisional: Some(true),
-                    };
-                    let _ = app_event.emit("asr-snapshot", payload);
                 }
-                TranscriptionEvent::PauseRepairUpdate { repairs, processed_until } => {
-                    let payload = AsrSnapshot {
-                        job_id: job_id_event.clone(),
-                        segments: Vec::new(),
-                        language: None,
-                        processed_until,
-                        pause_repairs: Some(repairs),
-                        view: Some("standard".into()),
-                        provisional: Some(true),
-                    };
-                    let _ = app_event.emit("asr-snapshot", payload);
+                TranscriptionEvent::PauseRepairUpdate { .. } => {
+                    // Pause repairs are persisted with Finished and must not make
+                    // the Standard view appear before canonicalization completes.
                 }
                 TranscriptionEvent::Finished {
                     segments,
@@ -653,7 +620,7 @@ pub async fn transcribe_job(
         return Err("语音识别未产生任何有效文本".to_string());
     }
 
-    // `result_segments` are the immutable FunASR Raw output. No legacy text cleanup or
+    // `result_segments` are the immutable backend Raw output. No legacy text cleanup or
     // segment consolidation has run before this point.
     let raw_text = result_segments
         .iter()
@@ -686,7 +653,7 @@ pub async fn transcribe_job(
     // English gets a complete CTC word timeline. This is intentionally separate from
     // PauseBoundaryRepair: punctuation decides *whether* a Canonical sentence ends, while
     // CTC supplies the exact clock for that textual candidate.
-    if is_english
+    if !is_moss && is_english
         && Path::new(&alignment_config.punctuation_runtime_path).is_file()
         && Path::new(&alignment_config.alignment_model_path).is_file()
         && Path::new(&alignment_config.alignment_tokens_path).is_file()
@@ -747,8 +714,8 @@ pub async fn transcribe_job(
         metadata: crate::transcript::model::AsrMetadata {
             // Legacy compatibility only; authoritative pipeline version lives in pipeline_manifest.json.
             pipeline_version: crate::transcript::storage::CURRENT_PIPELINE_VERSION.to_string(),
-            asr_backend: "funasr".to_string(),
-            asr_model_version: Some(DEFAULT_MODEL_ID.to_string()),
+            asr_backend: if is_moss { "openasr".to_string() } else { "funasr".to_string() },
+            asr_model_version: Some(expected_model_id.to_string()),
             created_at,
             source_audio_hash,
             raw_revision_id: None,
@@ -796,6 +763,7 @@ pub async fn transcribe_job(
         "asr-snapshot",
         AsrSnapshot {
             job_id: job_id.to_string(),
+            model_id: Some(expected_model_id.to_string()),
             segments: final_raw_segments,
             language: Some(language.clone()),
             processed_until: final_raw_processed_until,
@@ -997,7 +965,7 @@ pub async fn transcribe_job(
 
     let mut result = TranscriptResult {
         job_id: job_id.to_string(),
-        model_id: DEFAULT_MODEL_ID.to_string(),
+        model_id: expected_model_id.to_string(),
         language,
         translation_language: None,
         text: String::new(),
@@ -1017,9 +985,7 @@ pub async fn transcribe_job(
 
     save_transcript(task_data_dir, job_id, &result)?;
 
-    // Keep the UI's existing provisional transcript visible while the Canonical pipeline runs,
-    // then atomically publish the persisted Standard view. The frontend replaces matching rows
-    // in place instead of clearing the transcript and reloading an empty state.
+    // Publish the Standard view only after the complete canonical result has been persisted.
     let final_processed_until = result
         .segments
         .last()
@@ -1027,6 +993,7 @@ pub async fn transcribe_job(
         .unwrap_or(0.0);
     let final_snapshot = AsrSnapshot {
         job_id: job_id.to_string(),
+        model_id: Some(expected_model_id.to_string()),
         segments: result.segments.clone(),
         language: Some(result.language.clone()),
         processed_until: final_processed_until,

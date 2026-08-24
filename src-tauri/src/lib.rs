@@ -3,6 +3,7 @@ mod chunk_stitcher;
 mod ctc_alignment_ffi;
 mod media;
 mod native_manager;
+mod openasr;
 mod pause_alignment;
 mod punctuation_ffi;
 mod summary;
@@ -70,6 +71,10 @@ struct JobRecord {
     thumbnail_url: Option<String>,
     error_message: Option<String>,
     status_message: Option<String>,
+    #[serde(default)]
+    asr_backend: Option<String>,
+    #[serde(default)]
+    asr_config_json: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -98,7 +103,9 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
             source_url TEXT NOT NULL,
             thumbnail_url TEXT,
             error_message TEXT,
-            status_message TEXT
+            status_message TEXT,
+            asr_backend TEXT,
+            asr_config_json TEXT
         );",
     )?;
     let _ = connection.execute("ALTER TABLE jobs ADD COLUMN thumbnail_url TEXT", []);
@@ -108,6 +115,8 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let _ = connection.execute("ALTER TABLE jobs ADD COLUMN phase_completed INTEGER", []);
     let _ = connection.execute("ALTER TABLE jobs ADD COLUMN phase_total INTEGER", []);
     let _ = connection.execute("ALTER TABLE jobs ADD COLUMN phase_unit TEXT", []);
+    let _ = connection.execute("ALTER TABLE jobs ADD COLUMN asr_backend TEXT", []);
+    let _ = connection.execute("ALTER TABLE jobs ADD COLUMN asr_config_json TEXT", []);
 
     let existing_jobs: i64 =
         connection.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
@@ -129,6 +138,8 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
                 thumbnail_url: None,
                 error_message: None,
                 status_message: None,
+                asr_backend: None,
+                asr_config_json: None,
             },
             JobRecord {
                 id: "rust-async".into(),
@@ -146,6 +157,8 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
                 thumbnail_url: None,
                 error_message: None,
                 status_message: None,
+                asr_backend: None,
+                asr_config_json: None,
             },
             JobRecord {
                 id: "user-interview".into(),
@@ -163,6 +176,8 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
                 thumbnail_url: None,
                 error_message: None,
                 status_message: None,
+                asr_backend: None,
+                asr_config_json: None,
             },
         ];
 
@@ -176,8 +191,8 @@ fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
 
 fn insert_or_update_job(connection: &Connection, job: &JobRecord) -> rusqlite::Result<()> {
     connection.execute(
-        "INSERT INTO jobs (id, title, platform, duration, updated_at, status, progress, phase, phase_completed, phase_total, phase_unit, source_url, thumbnail_url, error_message, status_message)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        "INSERT INTO jobs (id, title, platform, duration, updated_at, status, progress, phase, phase_completed, phase_total, phase_unit, source_url, thumbnail_url, error_message, status_message, asr_backend, asr_config_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title,
            platform = excluded.platform,
@@ -192,7 +207,9 @@ fn insert_or_update_job(connection: &Connection, job: &JobRecord) -> rusqlite::R
            source_url = excluded.source_url,
            thumbnail_url = excluded.thumbnail_url,
            error_message = excluded.error_message,
-           status_message = excluded.status_message",
+           status_message = excluded.status_message,
+           asr_backend = excluded.asr_backend,
+           asr_config_json = excluded.asr_config_json",
         params![
             job.id,
             job.title,
@@ -209,6 +226,8 @@ fn insert_or_update_job(connection: &Connection, job: &JobRecord) -> rusqlite::R
             job.thumbnail_url,
             job.error_message,
             job.status_message,
+            job.asr_backend,
+            job.asr_config_json,
         ],
     )?;
     Ok(())
@@ -411,7 +430,7 @@ fn list_jobs(state: State<'_, AppState>) -> Result<Vec<JobRecord>, String> {
         .map_err(|_| "数据库当前不可用".to_string())?;
     let mut statement = database
         .prepare(
-            "SELECT id, title, platform, duration, updated_at, status, progress, phase, phase_completed, phase_total, phase_unit, source_url, thumbnail_url, error_message, status_message
+            "SELECT id, title, platform, duration, updated_at, status, progress, phase, phase_completed, phase_total, phase_unit, source_url, thumbnail_url, error_message, status_message, asr_backend, asr_config_json
              FROM jobs ORDER BY rowid DESC",
         )
         .map_err(|error| error.to_string())?;
@@ -434,6 +453,8 @@ fn list_jobs(state: State<'_, AppState>) -> Result<Vec<JobRecord>, String> {
                 thumbnail_url: row.get(12)?,
                 error_message: row.get(13)?,
                 status_message: row.get(14)?,
+                asr_backend: row.get(15)?,
+                asr_config_json: row.get(16)?,
             })
         })
         .map_err(|error| error.to_string())?;
@@ -522,7 +543,7 @@ fn reconcile_jobs(state: State<'_, AppState>) -> Result<Vec<ReconciledJob>, Stri
         .map_err(|_| "数据库当前不可用".to_string())?;
     let mut statement = database
         .prepare(
-            "SELECT id, title, platform, duration, updated_at, status, progress, phase, phase_completed, phase_total, phase_unit, source_url, thumbnail_url, error_message, status_message
+            "SELECT id, title, platform, duration, updated_at, status, progress, phase, phase_completed, phase_total, phase_unit, source_url, thumbnail_url, error_message, status_message, asr_backend, asr_config_json
              FROM jobs",
         )
         .map_err(|error| error.to_string())?;
@@ -544,6 +565,8 @@ fn reconcile_jobs(state: State<'_, AppState>) -> Result<Vec<ReconciledJob>, Stri
                 thumbnail_url: row.get(12)?,
                 error_message: row.get(13)?,
                 status_message: row.get(14)?,
+                asr_backend: row.get(15)?,
+                asr_config_json: row.get(16)?,
             })
         })
         .map_err(|error| error.to_string())?;
@@ -861,6 +884,29 @@ fn delete_asr_model(app: AppHandle, state: State<'_, AppState>) -> Result<(), St
 }
 
 #[tauri::command]
+fn inspect_moss_model(app: AppHandle) -> openasr::OpenAsrModelStatus {
+    openasr::model_status(&app)
+}
+
+#[tauri::command]
+async fn download_moss_model(app: AppHandle, state: State<'_, AppState>) -> Result<openasr::OpenAsrModelStatus, String> {
+    if state.model_download_active.swap(true, Ordering::Relaxed) {
+        return Err("已有模型正在下载中".to_string());
+    }
+    let result = openasr::download_model(&app).await;
+    state.model_download_active.store(false, Ordering::Relaxed);
+    result
+}
+
+#[tauri::command]
+fn delete_moss_model(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if state.model_download_active.load(Ordering::Relaxed) {
+        return Err("模型正在下载，暂时无法删除".to_string());
+    }
+    openasr::delete_model(&app)
+}
+
+#[tauri::command]
 fn inspect_summary_model(state: State<'_, AppState>) -> summary::SummaryModelStatus {
     summary::model_status(&state.app_data_dir)
 }
@@ -961,6 +1007,23 @@ async fn transcribe_media(
 
     let model_data_dir = state.app_data_dir.clone();
     let task_data_dir = current_task_data_directory(&state)?;
+    // Snapshot the backend/config at the start of the run.  This keeps a retry
+    // deterministic even if the user changes the global ASR setting while it is
+    // processing.
+    let (asr_backend, asr_config_json) = {
+        let database = state
+            .database
+            .lock()
+            .map_err(|_| "数据库当前不可用".to_string())?;
+        database
+            .query_row(
+                "SELECT asr_backend, asr_config_json FROM jobs WHERE id = ?1",
+                [&job_id],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .unwrap_or((None, None))
+    };
+    let asr_backend = asr_backend.unwrap_or_else(|| "funasr-nano".to_string());
     let worker_app = app.clone();
     let worker_job_id = job_id.clone();
     let result = asr::transcribe_job(
@@ -968,6 +1031,8 @@ async fn transcribe_media(
         &model_data_dir,
         &task_data_dir,
         &worker_job_id,
+        &asr_backend,
+        asr_config_json.as_deref(),
         cancelled,
     )
     .await;
@@ -1272,6 +1337,9 @@ pub fn run() {
             inspect_asr_model,
             download_asr_model,
             delete_asr_model,
+            inspect_moss_model,
+            download_moss_model,
+            delete_moss_model,
             inspect_summary_model,
             download_summary_model,
             delete_summary_model,

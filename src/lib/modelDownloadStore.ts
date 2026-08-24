@@ -2,7 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { isTauri, runtime } from "./runtime";
 import type { AsrModelStatus, ModelDownloadProgress, ModelReadiness, SummaryModelStatus, TranslationModelStatus } from "../types";
 
-export type ModelKind = "asr" | "summary" | "translation";
+export type ModelKind = "asr" | "moss" | "summary" | "translation";
 
 export interface ModelDownloadState {
   downloadingKind: ModelKind | null;
@@ -10,6 +10,7 @@ export interface ModelDownloadState {
   message: Record<ModelKind, string>;
   error: Record<ModelKind, string>;
   asrModel: AsrModelStatus | null;
+  mossModel: AsrModelStatus | null;
   summaryModel: SummaryModelStatus | null;
   translationModel: TranslationModelStatus | null;
 }
@@ -19,16 +20,17 @@ type Listener = () => void;
 class ModelDownloadStore {
   private state: ModelDownloadState = {
     downloadingKind: null,
-    progress: { asr: 0, summary: 0, translation: 0 },
-    message: { asr: "", summary: "", translation: "" },
-    error: { asr: "", summary: "", translation: "" },
+    progress: { asr: 0, moss: 0, summary: 0, translation: 0 },
+    message: { asr: "", moss: "", summary: "", translation: "" },
+    error: { asr: "", moss: "", summary: "", translation: "" },
     asrModel: null,
+    mossModel: null,
     summaryModel: null,
     translationModel: null,
   };
 
   private listeners = new Set<Listener>();
-  private activeDownloadPromise: Record<ModelKind, Promise<unknown> | null> = { asr: null, summary: null, translation: null };
+  private activeDownloadPromise: Record<ModelKind, Promise<unknown> | null> = { asr: null, moss: null, summary: null, translation: null };
   private initialized = false;
 
   constructor() {
@@ -44,13 +46,14 @@ class ModelDownloadStore {
         payload.modelId === "funasr-nano" ||
         payload.modelId.includes("funasr") ||
         payload.modelId.includes("nano");
+      const isMoss = payload.modelId.includes("moss") || payload.modelId.includes("openasr");
       const isTranslation =
         payload.modelId.includes("milmmt") ||
         payload.modelId.includes("translation");
       const isSummary =
         payload.modelId.includes("qwen") ||
         payload.modelId.includes("summary");
-      const kind: ModelKind = isAsr ? "asr" : isTranslation ? "translation" : isSummary ? "summary" : "asr";
+      const kind: ModelKind = isMoss ? "moss" : isAsr ? "asr" : isTranslation ? "translation" : isSummary ? "summary" : "asr";
 
       this.update((draft) => {
         draft.progress[kind] = payload.progress;
@@ -91,18 +94,20 @@ class ModelDownloadStore {
 
   public async refresh(onStatusChange?: (readiness: ModelReadiness) => void) {
     try {
-      const [asr, summary, translation] = await Promise.all([
+      const [asr, moss, summary, translation] = await Promise.all([
         runtime.inspectAsrModel(),
+        runtime.inspectMossModel(),
         runtime.inspectSummaryModel(),
         runtime.inspectTranslationModel(),
       ]);
       this.update((draft) => {
         draft.asrModel = asr;
+        draft.mossModel = moss;
         draft.summaryModel = summary;
         draft.translationModel = translation;
       });
-      onStatusChange?.({ asr: asr.installed, summary: summary.installed, translation: translation.installed });
-      return { asr, summary, translation };
+      onStatusChange?.({ asr: asr.installed || moss.installed, summary: summary.installed, translation: translation.installed });
+      return { asr, moss, summary, translation };
     } catch (reason) {
       const text = reason instanceof Error ? reason.message : String(reason);
       this.update((draft) => {
@@ -136,6 +141,8 @@ class ModelDownloadStore {
       try {
         if (kind === "asr") {
           await runtime.downloadAsrModel(onProgress);
+        } else if (kind === "moss") {
+          await runtime.downloadMossModel(onProgress);
         } else if (kind === "translation") {
           await runtime.downloadTranslationModel(onProgress);
         } else {
@@ -175,6 +182,7 @@ class ModelDownloadStore {
     });
     try {
       if (kind === "asr") await runtime.deleteAsrModel();
+      else if (kind === "moss") await runtime.deleteMossModel();
       else if (kind === "translation") await runtime.deleteTranslationModel();
       else await runtime.deleteSummaryModel();
       await this.refresh(onStatusChange);

@@ -391,6 +391,10 @@ function VideoTranscriptWorkspace({
   const [savingEdit, setSavingEdit] = useState(false);
   const isRecognizing = transcriptPhase === "recognizing";
   const isRefining = transcriptPhase === "refining";
+  const isTranscriptFinished = (job.status === "transcribed" || job.status === "completed") && !isRecognizing && !isRefining && Boolean(transcript);
+  const activeTranscript = isTranscriptFinished
+    ? (viewMode === "standard" ? transcript : (rawTranscript ?? loadedViewTranscript))
+    : (rawTranscript ?? loadedViewTranscript ?? transcript);
 
   const videoUrl = useMemo(
     () => media?.videoFile ? runtime.localAssetUrl(media.videoFile) : undefined,
@@ -402,7 +406,6 @@ function VideoTranscriptWorkspace({
       : job.thumbnailUrl ?? fallbackThumbnailUrl,
     [job.thumbnailUrl, media?.thumbnailFile],
   );
-  const activeTranscript = viewMode === "standard" ? transcript : (rawTranscript ?? loadedViewTranscript);
   // Frontend is presentation-only: Raw and Standard segment identities/timestamps come from backend events/storage.
   const segments = useMemo(() => activeTranscript?.segments ?? [], [activeTranscript]);
   const asrPercent = asrPhaseProgress?.total && asrPhaseProgress.total > 0
@@ -694,7 +697,7 @@ function VideoTranscriptWorkspace({
                 同步中
               </span>
             ) : null}
-            {transcript || rawTranscript ? (
+            {isTranscriptFinished ? (
               <div className="transcript-display-switch" role="group" aria-label="转录文本视图">
                 {([
                   ["raw", "原始"],
@@ -771,7 +774,7 @@ function VideoTranscriptWorkspace({
                 aria-current={activeSegment?.id === segment.id ? "true" : undefined}
                 onClick={() => seekTo(segment.startMs, autoPlayOnTranscriptClick)}
               >
-                <time>{formatTimestamp(segment.startMs)}</time>
+                <time>[{formatTimestamp(segment.startMs)} - {formatTimestamp(segment.endMs)}]</time>
                 <span className="transcript-text">
                   {effectiveDisplayMode === "translated" ? (
                     <span className="transcript-translation">{segment.translatedText || segment.text}</span>
@@ -957,7 +960,7 @@ export function TaskDetailPage({
         if (nextSegments.length === 0 && !nextRepairs?.length) return prev;
         return {
           jobId: job.id,
-          modelId: prev?.modelId || "funasr-nano",
+          modelId: payload.modelId || prev?.modelId || "funasr-nano",
           language: payload.language || prev?.language || "zh",
           translationLanguage: preserveTranslations ? prev?.translationLanguage : undefined,
           text: nextSegments.map((segment) => segment.text).join("\n"),
@@ -990,6 +993,15 @@ export function TaskDetailPage({
     let active = true;
     const phaseUnlisten = listen<AsrPhaseEvent>("asr-phase", ({ payload }) => {
       if (!active || payload.jobId !== job.id) return;
+      if (payload.phase === "recognition" && payload.state === "started") {
+        // A rerun replaces the previous subtitle result.  Raw can stream during
+        // recognition; Standard stays empty until the final canonical snapshot.
+        setRawTranscript(null);
+        setRealTranscript(null);
+        setTranscriptLoading(true);
+        setTranscriptRefreshing(false);
+        setTranscriptError("");
+      }
       setAsrPhaseMessage(payload.message);
       setAsrPipelinePhase((current) => {
         if (payload.state === "started") return payload.phase;

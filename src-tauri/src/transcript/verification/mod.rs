@@ -136,7 +136,6 @@ struct TokenSpan {
     norm: String,
     byte_start: usize,
     byte_end: usize,
-    ascii_word: bool,
 }
 
 fn is_cjk_like(ch: char) -> bool {
@@ -164,7 +163,6 @@ fn tokenize(text: &str) -> Vec<TokenSpan> {
                     norm: raw.to_ascii_lowercase(),
                     byte_start: s,
                     byte_end: end,
-                    ascii_word: true,
                 });
             }
         }
@@ -185,14 +183,12 @@ fn tokenize(text: &str) -> Vec<TokenSpan> {
                 norm: ch.to_string(),
                 byte_start: idx,
                 byte_end: next,
-                ascii_word: false,
             });
         } else if ch.is_alphanumeric() {
             out.push(TokenSpan {
                 norm: ch.to_lowercase().collect(),
                 byte_start: idx,
                 byte_end: next,
-                ascii_word: false,
             });
         }
     }

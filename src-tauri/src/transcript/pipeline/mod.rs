@@ -72,9 +72,7 @@ pub struct SurfaceRepairEvidence {
 pub struct CrossBoundaryRewriteEvidence {
     pub left_segment_id: String,
     pub right_segment_id: String,
-    #[allow(dead_code)]
     pub left_text: Option<String>,
-    #[allow(dead_code)]
     pub right_text: Option<String>,
     /// When true the right segment is a verified ASR boundary fragment and is removed from
     /// the Canonical working copy after the bridge has repaired the left segment. Raw remains immutable.

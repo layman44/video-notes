@@ -73,25 +73,6 @@ struct CtcScanWindow {
     punctuation_hint: String,
 }
 
-#[allow(dead_code)]
-pub async fn build_selective_pause_repairs(
-    ffmpeg: &str,
-    video: &str,
-    duration: f64,
-    segments: &[TranscriptSegment],
-    vad_segments: &[VadSpeechSegment],
-    dll_path: &Path,
-    model_path: &Path,
-    tokens_path: &Path,
-    punctuation_model_path: &Path,
-    threads: usize,
-) -> Result<Vec<PauseBoundaryRepair>, String> {
-    build_selective_pause_repairs_in_range(
-        ffmpeg, video, duration, segments, vad_segments, dll_path, model_path,
-        tokens_path, punctuation_model_path, threads, 0.0, duration,
-    ).await
-}
-
 /// Incremental version used by the streaming Stable Prefix pipeline. `range_start`
 /// and `range_end` refer to already-stable acoustic time. Candidate offsets remain
 /// global because we still build alignment against the complete stable transcript;

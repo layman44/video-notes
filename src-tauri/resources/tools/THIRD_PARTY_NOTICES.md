@@ -31,4 +31,11 @@ VideoNotes invokes these components as separate executables. They are not linked
 - License: MIT
 - Included license: `licenses/llama.cpp-LICENSE.txt`
 
-The exact download URLs and SHA-256 values used for a local build are recorded in `media-tools.lock.json`, `whisper/whisper-worker.lock.json`, and `llama/llama-worker.lock.json`. Before publicly distributing an installer, complete the applicable GPL source-code and notice obligations for the exact FFmpeg build being shipped.
+## OpenASR
+
+- Project: https://github.com/QuintinShaw/openasr
+- Binary: pinned Windows x64 CPU release 0.1.30 (`openasr.exe` and runtime DLLs)
+- License: Apache-2.0
+- The MOSS q4 model is a separately downloaded Apache-2.0 model pack and is not bundled in the installer.
+
+The exact download URLs and SHA-256 values used for a local build are recorded in `media-tools.lock.json`, `whisper/whisper-worker.lock.json`, `llama/llama-worker.lock.json`, and `openasr-worker.lock.json`. Before publicly distributing an installer, complete the applicable GPL source-code and notice obligations for the exact FFmpeg build being shipped.

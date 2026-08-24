@@ -205,6 +205,18 @@ export const runtime = {
     };
   },
 
+  async inspectMossModel(): Promise<AsrModelStatus> {
+    if (isTauri()) return invoke<AsrModelStatus>("inspect_moss_model");
+    return {
+      id: "moss-transcribe-diarize:q4",
+      name: "MOSS-Transcribe-Diarize 0.9B q4（OpenASR）",
+      backend: "openasr-moss-q4",
+      installed: false,
+      sizeLabel: "约 860 MiB",
+      path: "browser-demo/models/moss-transcribe-diarize-q4_k.oasr",
+    };
+  },
+
   async downloadAsrModel(onProgress: (progress: ModelDownloadProgress) => void): Promise<AsrModelStatus> {
     if (!isTauri()) {
       for (const progress of [8, 24, 51, 78, 100]) {
@@ -238,6 +250,22 @@ export const runtime = {
       return;
     }
     await invoke("delete_asr_model");
+  },
+
+  async downloadMossModel(onProgress: (progress: ModelDownloadProgress) => void): Promise<AsrModelStatus> {
+    if (!isTauri()) return this.inspectMossModel();
+    const unlisten = await listen<ModelDownloadProgress>("model-download-progress", ({ payload }) => {
+      if (payload.modelId.includes("moss") || payload.modelId.includes("openasr")) onProgress(payload);
+    });
+    try {
+      return await invoke<AsrModelStatus>("download_moss_model");
+    } finally {
+      unlisten();
+    }
+  },
+
+  async deleteMossModel(): Promise<void> {
+    if (isTauri()) await invoke("delete_moss_model");
   },
 
   async inspectSummaryModel(): Promise<SummaryModelStatus> {
