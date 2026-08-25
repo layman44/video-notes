@@ -12,10 +12,11 @@ mod summary;
 pub mod transcript;
 mod transcriber;
 mod translation;
+mod workflow;
 
 pub use error::AppError;
 
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -27,16 +28,15 @@ use std::{
         Arc, Mutex,
     },
 };
-use sysinfo::System;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 struct AppState {
-    database: Mutex<Connection>,
+    database: Arc<Mutex<Connection>>,
     app_data_dir: PathBuf,
-    task_data_dir: Mutex<PathBuf>,
-    cancellations: Mutex<media::CancellationMap>,
+    task_data_dir: Arc<Mutex<PathBuf>>,
     model_download_active: AtomicBool,
+    workflow: Arc<workflow::WorkflowState>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -51,190 +51,6 @@ struct DataDirectorySettings {
 #[serde(rename_all = "camelCase")]
 struct StoredSettings {
     task_data_directory: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct JobRecord {
-    id: String,
-    title: String,
-    platform: String,
-    duration: String,
-    updated_at: String,
-    status: String,
-    progress: u8,
-    #[serde(default)]
-    phase: Option<String>,
-    #[serde(default)]
-    phase_completed: Option<u64>,
-    #[serde(default)]
-    phase_total: Option<u64>,
-    #[serde(default)]
-    phase_unit: Option<String>,
-    source_url: String,
-    thumbnail_url: Option<String>,
-    error_message: Option<String>,
-    status_message: Option<String>,
-    #[serde(default)]
-    asr_backend: Option<String>,
-    #[serde(default)]
-    asr_config_json: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SystemProfile {
-    memory_gb: u64,
-    logical_cores: usize,
-    recommended_threads: usize,
-    gpu_mode: &'static str,
-}
-
-fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch(
-        "CREATE TABLE IF NOT EXISTS jobs (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            platform TEXT NOT NULL,
-            duration TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            status TEXT NOT NULL,
-            progress INTEGER NOT NULL,
-            phase TEXT,
-            phase_completed INTEGER,
-            phase_total INTEGER,
-            phase_unit TEXT,
-            source_url TEXT NOT NULL,
-            thumbnail_url TEXT,
-            error_message TEXT,
-            status_message TEXT,
-            asr_backend TEXT,
-            asr_config_json TEXT
-        );",
-    )?;
-    let _ = connection.execute("ALTER TABLE jobs ADD COLUMN thumbnail_url TEXT", []);
-    let _ = connection.execute("ALTER TABLE jobs ADD COLUMN error_message TEXT", []);
-    let _ = connection.execute("ALTER TABLE jobs ADD COLUMN status_message TEXT", []);
-    let _ = connection.execute("ALTER TABLE jobs ADD COLUMN phase TEXT", []);
-    let _ = connection.execute("ALTER TABLE jobs ADD COLUMN phase_completed INTEGER", []);
-    let _ = connection.execute("ALTER TABLE jobs ADD COLUMN phase_total INTEGER", []);
-    let _ = connection.execute("ALTER TABLE jobs ADD COLUMN phase_unit TEXT", []);
-    let _ = connection.execute("ALTER TABLE jobs ADD COLUMN asr_backend TEXT", []);
-    let _ = connection.execute("ALTER TABLE jobs ADD COLUMN asr_config_json TEXT", []);
-
-    let existing_jobs: i64 =
-        connection.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
-    if existing_jobs == 0 {
-        let demo_jobs = [
-            JobRecord {
-                id: "rag-overview".into(),
-                title: "从零理解 RAG 的工作原理".into(),
-                platform: "bilibili".into(),
-                duration: "28:47".into(),
-                updated_at: "今天 10:24".into(),
-                status: "completed".into(),
-                progress: 100,
-                phase: None,
-                phase_completed: None,
-                phase_total: None,
-                phase_unit: None,
-                source_url: "https://www.bilibili.com/video/BV1RAGDEMO".into(),
-                thumbnail_url: None,
-                error_message: None,
-                status_message: None,
-                asr_backend: None,
-                asr_config_json: None,
-            },
-            JobRecord {
-                id: "rust-async".into(),
-                title: "Rust 异步编程完整指南".into(),
-                platform: "douyin".into(),
-                duration: "56:18".into(),
-                updated_at: "今天 09:58".into(),
-                status: "processing".into(),
-                progress: 68,
-                phase: Some("recognition".into()),
-                phase_completed: None,
-                phase_total: None,
-                phase_unit: Some("milliseconds".into()),
-                source_url: "https://v.douyin.com/rust-demo/".into(),
-                thumbnail_url: None,
-                error_message: None,
-                status_message: None,
-                asr_backend: None,
-                asr_config_json: None,
-            },
-            JobRecord {
-                id: "user-interview".into(),
-                title: "产品经理如何做好用户访谈".into(),
-                platform: "bilibili".into(),
-                duration: "34:12".into(),
-                updated_at: "昨天 21:16".into(),
-                status: "paused".into(),
-                progress: 41,
-                phase: Some("recognition".into()),
-                phase_completed: None,
-                phase_total: None,
-                phase_unit: Some("milliseconds".into()),
-                source_url: "https://www.bilibili.com/video/BV1USERDEMO".into(),
-                thumbnail_url: None,
-                error_message: None,
-                status_message: None,
-                asr_backend: None,
-                asr_config_json: None,
-            },
-        ];
-
-        for job in demo_jobs {
-            insert_or_update_job(connection, &job)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn insert_or_update_job(connection: &Connection, job: &JobRecord) -> rusqlite::Result<()> {
-    connection.execute(
-        "INSERT INTO jobs (id, title, platform, duration, updated_at, status, progress, phase, phase_completed, phase_total, phase_unit, source_url, thumbnail_url, error_message, status_message, asr_backend, asr_config_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
-         ON CONFLICT(id) DO UPDATE SET
-           title = excluded.title,
-           platform = excluded.platform,
-           duration = excluded.duration,
-           updated_at = excluded.updated_at,
-           status = excluded.status,
-           progress = excluded.progress,
-           phase = excluded.phase,
-           phase_completed = excluded.phase_completed,
-           phase_total = excluded.phase_total,
-           phase_unit = excluded.phase_unit,
-           source_url = excluded.source_url,
-           thumbnail_url = excluded.thumbnail_url,
-           error_message = excluded.error_message,
-           status_message = excluded.status_message,
-           asr_backend = excluded.asr_backend,
-           asr_config_json = excluded.asr_config_json",
-        params![
-            job.id,
-            job.title,
-            job.platform,
-            job.duration,
-            job.updated_at,
-            job.status,
-            job.progress,
-            job.phase,
-            job.phase_completed,
-            job.phase_total,
-            job.phase_unit,
-            job.source_url,
-            job.thumbnail_url,
-            job.error_message,
-            job.status_message,
-            job.asr_backend,
-            job.asr_config_json,
-        ],
-    )?;
-    Ok(())
 }
 
 fn settings_path(app_data_dir: &Path) -> PathBuf {
@@ -363,13 +179,7 @@ fn change_task_data_directory(
     state: &State<'_, AppState>,
     requested_directory: PathBuf,
 ) -> Result<DataDirectorySettings, String> {
-    if state
-        .cancellations
-        .lock()
-        .map_err(|_| "任务控制器当前不可用".to_string())?
-        .is_empty()
-        == false
-    {
+    if state.workflow.has_active() {
         return Err("有任务正在处理，请等待完成或取消任务后再更改目录".to_string());
     }
 
@@ -396,226 +206,6 @@ fn change_task_data_directory(
         .lock()
         .map_err(|_| "数据目录当前不可用".to_string())? = new_root;
     data_directory_settings(state)
-}
-
-fn remove_path_if_exists(path: &Path) -> Result<(), String> {
-    if path.is_dir() {
-        fs::remove_dir_all(path).map_err(|error| format!("无法清理任务数据：{error}"))?;
-    } else if path.is_file() {
-        fs::remove_file(path).map_err(|error| format!("无法清理任务数据：{error}"))?;
-    }
-    Ok(())
-}
-
-fn ensure_job_idle(job_id: &str, state: &State<'_, AppState>) -> Result<(), String> {
-    let cancellations = state
-        .cancellations
-        .lock()
-        .map_err(|_| "任务控制器当前不可用".to_string())?;
-    if cancellations.contains_key(job_id) {
-        Err("任务正在处理中，请先取消并等待处理停止".to_string())
-    } else {
-        Ok(())
-    }
-}
-
-fn task_directory(job_id: &str, state: &State<'_, AppState>) -> Result<PathBuf, String> {
-    media::validate_job_id(job_id)?;
-    Ok(current_task_data_directory(state)?
-        .join("tasks")
-        .join(job_id))
-}
-
-#[tauri::command]
-fn list_jobs(state: State<'_, AppState>) -> Result<Vec<JobRecord>, String> {
-    let database = state
-        .database
-        .lock()
-        .map_err(|_| "数据库当前不可用".to_string())?;
-    let mut statement = database
-        .prepare(
-            "SELECT id, title, platform, duration, updated_at, status, progress, phase, phase_completed, phase_total, phase_unit, source_url, thumbnail_url, error_message, status_message, asr_backend, asr_config_json
-             FROM jobs ORDER BY rowid DESC",
-        )
-        .map_err(|error| error.to_string())?;
-
-    let rows = statement
-        .query_map([], |row| {
-            Ok(JobRecord {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                platform: row.get(2)?,
-                duration: row.get(3)?,
-                updated_at: row.get(4)?,
-                status: row.get(5)?,
-                progress: row.get(6)?,
-                phase: row.get(7)?,
-                phase_completed: row.get(8)?,
-                phase_total: row.get(9)?,
-                phase_unit: row.get(10)?,
-                source_url: row.get(11)?,
-                thumbnail_url: row.get(12)?,
-                error_message: row.get(13)?,
-                status_message: row.get(14)?,
-                asr_backend: row.get(15)?,
-                asr_config_json: row.get(16)?,
-            })
-        })
-        .map_err(|error| error.to_string())?;
-
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ReconciledJob {
-    id: String,
-    status: String,
-    progress: u8,
-    phase: Option<String>,
-    phase_completed: Option<u64>,
-    phase_total: Option<u64>,
-    phase_unit: Option<String>,
-    status_message: Option<String>,
-    error_message: Option<String>,
-}
-
-/// 根据任务目录中实际落盘的结果,推断被中断任务可恢复到的状态。
-/// 返回 (status, progress, status_message, error_message)。
-fn job_disk_state(task_dir: &Path) -> (String, u8, String, Option<String>) {
-    let note_path = task_dir.join("note").join("note.json");
-    if let Ok(raw) = fs::read_to_string(&note_path) {
-        if let Ok(value) = serde_json::from_str::<Value>(&raw) {
-            let has_markdown = value
-                .get("markdown")
-                .and_then(|value| value.as_str())
-                .map(|text| !text.trim().is_empty())
-                .unwrap_or(false);
-            if has_markdown {
-                return (
-                    "completed".into(),
-                    100,
-                    "上次处理已完成笔记整理".into(),
-                    None,
-                );
-            }
-        }
-    }
-    let transcript_path = task_dir.join("transcript").join("transcript.json");
-    if let Ok(raw) = fs::read_to_string(&transcript_path) {
-        if let Ok(value) = serde_json::from_str::<Value>(&raw) {
-            let segment_count = value
-                .get("segments")
-                .and_then(|value| value.as_array())
-                .map(|segments| segments.len())
-                .unwrap_or(0);
-            if segment_count > 0 {
-                return (
-                    "transcribed".into(),
-                    100,
-                    "语音转写已完成；可先人工校正，再按需翻译或生成笔记".into(),
-                    None,
-                );
-            }
-        }
-    }
-    if task_dir.join("media.json").is_file() {
-        return (
-            "waiting".into(),
-            100,
-            "本地媒体已就绪；上次处理被中断，可点“开始转写”继续".into(),
-            None,
-        );
-    }
-    (
-        "failed".into(),
-        0,
-        "上次处理在保存本地结果前被中断，可重新尝试".into(),
-        Some("上次处理被中断，任务目录中没有可恢复的结果".into()),
-    )
-}
-
-/// 应用启动后调用:把遗留的 processing/paused 任务按磁盘实际结果修正,
-/// 避免重启后任务永远停留在“处理中”而实际没有任何后台进程。
-#[tauri::command]
-fn reconcile_jobs(state: State<'_, AppState>) -> Result<Vec<ReconciledJob>, String> {
-    let task_root = current_task_data_directory(&state)?;
-    let database = state
-        .database
-        .lock()
-        .map_err(|_| "数据库当前不可用".to_string())?;
-    let mut statement = database
-        .prepare(
-            "SELECT id, title, platform, duration, updated_at, status, progress, phase, phase_completed, phase_total, phase_unit, source_url, thumbnail_url, error_message, status_message, asr_backend, asr_config_json
-             FROM jobs",
-        )
-        .map_err(|error| error.to_string())?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok(JobRecord {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                platform: row.get(2)?,
-                duration: row.get(3)?,
-                updated_at: row.get(4)?,
-                status: row.get(5)?,
-                progress: row.get(6)?,
-                phase: row.get(7)?,
-                phase_completed: row.get(8)?,
-                phase_total: row.get(9)?,
-                phase_unit: row.get(10)?,
-                source_url: row.get(11)?,
-                thumbnail_url: row.get(12)?,
-                error_message: row.get(13)?,
-                status_message: row.get(14)?,
-                asr_backend: row.get(15)?,
-                asr_config_json: row.get(16)?,
-            })
-        })
-        .map_err(|error| error.to_string())?;
-    let jobs = rows
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-
-    let mut reconciled = Vec::new();
-    for mut job in jobs {
-        if job.status != "processing" && job.status != "paused" {
-            continue;
-        }
-        let task_dir = task_root.join("tasks").join(&job.id);
-        let (status, progress, status_message, error_message) = job_disk_state(&task_dir);
-        job.status = status;
-        job.progress = progress;
-        job.phase = None;
-        job.phase_completed = None;
-        job.phase_total = None;
-        job.phase_unit = None;
-        job.status_message = Some(status_message);
-        job.error_message = error_message;
-        insert_or_update_job(&database, &job).map_err(|error| error.to_string())?;
-        reconciled.push(ReconciledJob {
-            id: job.id,
-            status: job.status,
-            progress: job.progress,
-            phase: job.phase,
-            phase_completed: job.phase_completed,
-            phase_total: job.phase_total,
-            phase_unit: job.phase_unit,
-            status_message: job.status_message,
-            error_message: job.error_message,
-        });
-    }
-    Ok(reconciled)
-}
-
-#[tauri::command]
-fn save_job(job: JobRecord, state: State<'_, AppState>) -> Result<(), String> {
-    let database = state
-        .database
-        .lock()
-        .map_err(|_| "数据库当前不可用".to_string())?;
-    insert_or_update_job(&database, &job).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -668,82 +258,14 @@ async fn reset_data_directory(
 }
 
 #[tauri::command]
-fn open_task_directory(job_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let directory = task_directory(&job_id, &state)?.join("source");
-    fs::create_dir_all(&directory).map_err(|error| format!("无法创建视频目录：{error}"))?;
-    #[cfg(windows)]
-    {
-        Command::new("explorer.exe")
-            .arg(&directory)
-            .spawn()
-            .map_err(|error| format!("无法打开视频目录：{error}"))?;
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = directory;
-        Err("当前系统暂不支持自动打开任务目录".to_string())
-    }
-}
-
-#[tauri::command]
-fn reset_task_media(job_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    media::validate_job_id(&job_id)?;
-    ensure_job_idle(&job_id, &state)?;
-    let directory = task_directory(&job_id, &state)?;
-    for path in [
-        directory.join("source"),
-        directory.join("chunks"),
-        directory.join("transcript"),
-        directory.join("translation"),
-        directory.join("note"),
-        directory.join("media.json"),
-    ] {
-        remove_path_if_exists(&path)?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn reset_task_transcript(job_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    media::validate_job_id(&job_id)?;
-    ensure_job_idle(&job_id, &state)?;
-    let directory = task_directory(&job_id, &state)?;
-    for path in [
-        directory.join("transcript"),
-        directory.join("translation"),
-        directory.join("note"),
-    ] {
-        remove_path_if_exists(&path)?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn delete_task(job_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    media::validate_job_id(&job_id)?;
-    ensure_job_idle(&job_id, &state)?;
-    let directory = task_directory(&job_id, &state)?;
-    remove_path_if_exists(&directory)?;
-    let database = state
-        .database
-        .lock()
-        .map_err(|_| "数据库当前不可用".to_string())?;
-    database
-        .execute("DELETE FROM jobs WHERE id = ?1", params![job_id])
-        .map_err(|error| format!("无法删除任务记录：{error}"))?;
-    Ok(())
-}
-
-#[tauri::command]
-async fn export_task_audio(
-    job_id: String,
+async fn export_video_audio(
+    video_id: String,
     suggested_filename: String,
     app: AppHandle,
     window: tauri::WebviewWindow,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    media::validate_job_id(&job_id)?;
+    media::validate_job_id(&video_id)?;
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
@@ -767,14 +289,14 @@ async fn export_task_audio(
     let tools = media::resolve_media_tools(&app)?;
     let task_data_dir = current_task_data_directory(&state)?;
     let worker_app = app.clone();
-    let worker_job_id = job_id.clone();
+    let worker_video_id = video_id.clone();
     let worker_output_path = output_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
         media::export_audio(
             &worker_app,
             &tools,
             &task_data_dir,
-            &worker_job_id,
+            &worker_video_id,
             &worker_output_path,
         )
     })
@@ -809,83 +331,11 @@ async fn search_videos(
 }
 
 #[tauri::command]
-async fn prepare_media(
-    job_id: String,
-    source_url: String,
-    app: AppHandle,
+fn load_video_media(
+    video_id: String,
     state: State<'_, AppState>,
 ) -> Result<media::MediaPreparationResult, AppError> {
-    let tools = media::resolve_media_tools(&app)?;
-    let cancelled = Arc::new(AtomicBool::new(false));
-    {
-        let mut cancellations = state
-            .cancellations
-            .lock()
-            .map_err(|_| AppError::failed("任务控制器当前不可用"))?;
-        if cancellations.contains_key(&job_id) {
-            return Err(AppError::new("ALREADY_ACTIVE", "该任务已经在处理中"));
-        }
-        cancellations.insert(job_id.clone(), cancelled.clone());
-    }
-
-    let task_data_dir = current_task_data_directory(&state)?;
-    let worker_app = app.clone();
-    let worker_job_id = job_id.clone();
-    let worker_result = tauri::async_runtime::spawn_blocking(move || {
-        media::prepare_media(
-            &worker_app,
-            &tools,
-            &task_data_dir,
-            &worker_job_id,
-            &source_url,
-            cancelled,
-        )
-    })
-    .await;
-
-    if let Ok(mut cancellations) = state.cancellations.lock() {
-        cancellations.remove(&job_id);
-    }
-    Ok(worker_result.map_err(|error| AppError::failed(format!("媒体处理任务异常退出：{error}")))??)
-}
-
-#[tauri::command]
-fn load_media(
-    job_id: String,
-    state: State<'_, AppState>,
-) -> Result<media::MediaPreparationResult, AppError> {
-    Ok(media::load_media(&current_task_data_directory(&state)?, &job_id)?)
-}
-
-#[tauri::command]
-async fn cancel_media_preparation(
-    job_id: String,
-    state: State<'_, AppState>,
-) -> Result<bool, AppError> {
-    let has_task = {
-        let cancellations = state
-            .cancellations
-            .lock()
-            .map_err(|_| AppError::failed("任务控制器当前不可用"))?;
-        if let Some(cancelled) = cancellations.get(&job_id) {
-            cancelled.store(true, Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
-    };
-    if has_task {
-        // 等待后台处理线程完全退出并清理注销任务锁（最多等待 5 秒）
-        for _ in 0..50 {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            if let Ok(cancellations) = state.cancellations.lock() {
-                if !cancellations.contains_key(&job_id) {
-                    break;
-                }
-            }
-        }
-    }
-    Ok(has_task)
+    Ok(media::load_media(&current_task_data_directory(&state)?, &video_id)?)
 }
 
 #[tauri::command]
@@ -1020,147 +470,23 @@ fn open_models_directory(state: State<'_, AppState>) -> Result<(), AppError> {
 }
 
 #[tauri::command]
-async fn transcribe_media(
-    job_id: String,
-    resume: Option<bool>,
-    app: AppHandle,
+fn load_video_transcript(
+    video_id: String,
     state: State<'_, AppState>,
 ) -> Result<asr::TranscriptResult, AppError> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    {
-        let mut cancellations = state
-            .cancellations
-            .lock()
-            .map_err(|_| AppError::failed("任务控制器当前不可用"))?;
-        if cancellations.contains_key(&job_id) {
-            return Err(AppError::new("ALREADY_ACTIVE", "该任务已经在处理中"));
-        }
-        cancellations.insert(job_id.clone(), cancelled.clone());
-    }
-
-    let model_data_dir = state.app_data_dir.clone();
-    let task_data_dir = current_task_data_directory(&state)?;
-    // Snapshot the backend/config at the start of the run.  This keeps a retry
-    // deterministic even if the user changes the global ASR setting while it is
-    // processing.
-    let (asr_backend, asr_config_json) = {
-        let database = state
-            .database
-            .lock()
-            .map_err(|_| AppError::failed("数据库当前不可用"))?;
-        database
-            .query_row(
-                "SELECT asr_backend, asr_config_json FROM jobs WHERE id = ?1",
-                [&job_id],
-                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
-            )
-            .unwrap_or((None, None))
-    };
-    let asr_backend = asr_backend.unwrap_or_else(|| "funasr-nano".to_string());
-    let worker_app = app.clone();
-    let worker_job_id = job_id.clone();
-    let result = asr::transcribe_job(
-        &worker_app,
-        &model_data_dir,
-        &task_data_dir,
-        &worker_job_id,
-        &asr_backend,
-        asr_config_json.as_deref(),
-        resume.unwrap_or(false),
-        cancelled,
-    )
-    .await
-    .map_err(AppError::from);
-    if let Ok(mut cancellations) = state.cancellations.lock() {
-        cancellations.remove(&job_id);
-    }
-    result
-}
-
-#[tauri::command]
-fn load_transcript(
-    job_id: String,
-    state: State<'_, AppState>,
-) -> Result<asr::TranscriptResult, AppError> {
-    Ok(asr::load_transcript(&current_task_data_directory(&state)?, &job_id)?)
-}
-
-fn view_segments_to_transcript_result(
-    job_id: &str,
-    model_id: &str,
-    language: &str,
-    translation_language: Option<String>,
-    segments: Vec<crate::transcript::views::ViewSegment>,
-) -> asr::TranscriptResult {
-    let mapped = segments
-        .into_iter()
-        .enumerate()
-        .map(|(idx, segment)| asr::TranscriptSegment {
-            id: segment.id,
-            chunk_index: idx,
-            start: segment.start_ms as f64 / 1000.0,
-            end: segment.end_ms as f64 / 1000.0,
-            start_ms: segment.start_ms,
-            end_ms: segment.end_ms,
-            text: segment.text,
-            translated_text: segment.translated_text,
-            avg_confidence: None,
-        })
-        .collect::<Vec<_>>();
-    asr::TranscriptResult {
-        job_id: job_id.to_string(),
-        model_id: model_id.to_string(),
-        language: language.to_string(),
-        translation_language,
-        text: mapped.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join("\n"),
-        segments: mapped,
-        pause_repairs: None,
-    }
-}
-
-/// Loads a backend-owned transcript view. Only Raw and Standard are product views;
-/// the frontend must not re-implement Canonical transforms or invent timestamps.
-#[tauri::command]
-fn load_transcript_view(
-    job_id: String,
-    view: String,
-    state: State<'_, AppState>,
-) -> Result<asr::TranscriptResult, String> {
-    media::validate_job_id(&job_id)?;
-    let task_data_dir = current_task_data_directory(&state)?;
-    let transcript_dir = task_data_dir.join("tasks").join(&job_id).join("transcript");
-    let standard = asr::load_transcript(&task_data_dir, &job_id)?;
-
-    match view.trim().to_ascii_lowercase().as_str() {
-        "standard" => Ok(standard),
-        "raw" => {
-            if let Some(raw) = crate::transcript::storage::load_raw_transcript(&transcript_dir)? {
-                let language = raw.language.as_deref().unwrap_or(&standard.language);
-                Ok(view_segments_to_transcript_result(
-                    &job_id,
-                    &standard.model_id,
-                    language,
-                    None,
-                    crate::transcript::views::render_raw_view(&raw),
-                ))
-            } else {
-                Err("该任务没有可用的 Raw 原始转录；为避免把 Standard 误显示为原始内容，已拒绝回退。".to_string())
-            }
-        }
-        _ => Err(format!("不支持的 transcript view：{view}")),
-    }
+    Ok(asr::load_transcript(&current_task_data_directory(&state)?, &video_id)?)
 }
 
 /// 修改某条转录段文本并落盘(transcript.json + transcript.txt 同步更新)。
 #[tauri::command]
-fn update_transcript_segment(
-    job_id: String,
+fn update_video_transcript_segment(
+    video_id: String,
     segment_id: String,
     text: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let task_data_dir = current_task_data_directory(&state)?;
-    let mut transcript = asr::load_transcript(&task_data_dir, &job_id)?;
+    let mut transcript = asr::load_transcript(&task_data_dir, &video_id)?;
     let Some(segment) = transcript
         .segments
         .iter_mut()
@@ -1181,22 +507,20 @@ fn update_transcript_segment(
         .map(|segment| segment.text.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    asr::save_transcript(&task_data_dir, &job_id, &transcript)
+    asr::save_transcript(&task_data_dir, &video_id, &transcript)
         .map_err(|error| format!("无法保存转录修改：{error}"))?;
 
-    // Notes are also derived from Standard text. Remove stale note artifacts so a later
-    // manual “生成笔记” action always rebuilds from the edited transcript.
-    let note_dir = task_data_dir.join("tasks").join(&job_id).join("note");
-    if note_dir.exists() {
-        fs::remove_dir_all(&note_dir).map_err(|error| format!("无法使旧笔记失效：{error}"))?;
-    }
+    // Keep old derived files for recovery/export, but make their dependency
+    // state explicit. They must never be silently presented as current.
+    let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    workflow::mark_derived_stale(&db, &video_id)?;
     Ok(())
 }
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-async fn organize_notes(
-    job_id: String,
+async fn organize_video_notes(
+    video_id: String,
     title: String,
     source_url: String,
     platform: String,
@@ -1205,28 +529,20 @@ async fn organize_notes(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<summary::NoteResult, AppError> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    {
-        let mut cancellations = state
-            .cancellations
-            .lock()
-            .map_err(|_| AppError::failed("任务控制器当前不可用"))?;
-        if cancellations.contains_key(&job_id) {
-            return Err(AppError::new("ALREADY_ACTIVE", "该任务已经在处理中"));
-        }
-        cancellations.insert(job_id.clone(), cancelled.clone());
-    }
-
+    let cancelled = state.workflow.enqueue_cancel(&video_id).map_err(AppError::failed)?;
+    let workflow = state.workflow.clone();
     let model_data_dir = state.app_data_dir.clone();
     let task_data_dir = current_task_data_directory(&state)?;
+    let worker_task_data_dir = task_data_dir.clone();
     let worker_app = app.clone();
-    let worker_job_id = job_id.clone();
+    let worker_video_id = video_id.clone();
     let worker_result = tauri::async_runtime::spawn_blocking(move || {
+        let _permit = workflow.acquire_heavy(&worker_video_id, &cancelled).map_err(|e| e.to_string())?;
         summary::organize_job(
             &worker_app,
             &model_data_dir,
-            &task_data_dir,
-            &worker_job_id,
+            &worker_task_data_dir,
+            &worker_video_id,
             &title,
             &source_url,
             &platform,
@@ -1236,54 +552,49 @@ async fn organize_notes(
         )
     })
     .await;
-    if let Ok(mut cancellations) = state.cancellations.lock() {
-        cancellations.remove(&job_id);
-    }
-    Ok(worker_result.map_err(|error| AppError::failed(format!("内容整理任务异常退出：{error}")))??)
+    state.workflow.release_cancel(&video_id);
+    let note = worker_result.map_err(|error| AppError::failed(format!("内容整理任务异常退出：{error}")))??;
+    let db = state.database.lock().map_err(|_| AppError::failed("数据库当前不可用"))?;
+    workflow::mark_artifact_ready(&db, &video_id, "note", "note/note.json").map_err(AppError::failed)?;
+    Ok(note)
 }
 
 /// 用户主动触发的翻译任务：仅把非中文标准转录翻译为简体中文并保存，不做笔记整理。
 #[tauri::command]
-async fn translate_transcript(
-    job_id: String,
+async fn translate_video_transcript(
+    video_id: String,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    {
-        let mut cancellations = state
-            .cancellations
-            .lock()
-            .map_err(|_| AppError::failed("任务控制器当前不可用"))?;
-        if cancellations.contains_key(&job_id) {
-            return Err(AppError::new("ALREADY_ACTIVE", "该任务已经在处理中"));
-        }
-        cancellations.insert(job_id.clone(), cancelled.clone());
-    }
-
+    let cancelled = state.workflow.enqueue_cancel(&video_id).map_err(AppError::failed)?;
+    let workflow = state.workflow.clone();
     let model_data_dir = state.app_data_dir.clone();
     let task_data_dir = current_task_data_directory(&state)?;
+    let worker_task_data_dir = task_data_dir.clone();
     let worker_app = app.clone();
-    let worker_job_id = job_id.clone();
+    let worker_video_id = video_id.clone();
     let worker_result = tauri::async_runtime::spawn_blocking(move || {
+        let _permit = workflow.acquire_heavy(&worker_video_id, &cancelled).map_err(|e| e.to_string())?;
         summary::translate_job(
             &worker_app,
             &model_data_dir,
-            &task_data_dir,
-            &worker_job_id,
+            &worker_task_data_dir,
+            &worker_video_id,
             cancelled,
         )
     })
     .await;
-    if let Ok(mut cancellations) = state.cancellations.lock() {
-        cancellations.remove(&job_id);
-    }
-    Ok(worker_result.map_err(|error| AppError::failed(format!("翻译任务异常退出：{error}")))??)
+    state.workflow.release_cancel(&video_id);
+    worker_result.map_err(|error| AppError::failed(format!("翻译任务异常退出：{error}")))??;
+    workflow::write_translation_artifact(&task_data_dir, &video_id).map_err(AppError::failed)?;
+    let db = state.database.lock().map_err(|_| AppError::failed("数据库当前不可用"))?;
+    workflow::mark_artifact_ready(&db, &video_id, "translation", "translation/translation.json").map_err(AppError::failed)?;
+    Ok(())
 }
 
 #[tauri::command]
-fn load_note(job_id: String, state: State<'_, AppState>) -> Result<summary::NoteResult, AppError> {
-    Ok(summary::load_note(&current_task_data_directory(&state)?, &job_id)?)
+fn load_video_note(video_id: String, state: State<'_, AppState>) -> Result<summary::NoteResult, AppError> {
+    Ok(summary::load_note(&current_task_data_directory(&state)?, &video_id)?)
 }
 
 #[tauri::command]
@@ -1315,18 +626,136 @@ async fn export_markdown(
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
-#[tauri::command]
-fn system_profile() -> SystemProfile {
-    let logical_cores = std::thread::available_parallelism().map_or(4, usize::from);
-    let system = System::new_all();
-    let memory_gb = (system.total_memory() as f64 / 1024_f64.powi(3)).round() as u64;
+// --- Persistent workflow commands -----------------------------------------------------------
+// These are the only commands that create or mutate queue/library state.  The
+// media and ASR functions below are workers used by WorkflowState, not public
+// front-end orchestration entry points.
 
-    SystemProfile {
-        memory_gb,
-        logical_cores,
-        recommended_threads: logical_cores.saturating_sub(2).max(2),
-        gpu_mode: "cpu",
+#[tauri::command]
+fn list_videos(state: State<'_, AppState>) -> Result<Vec<workflow::VideoRecord>, String> {
+    let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    let root = current_task_data_directory(&state)?;
+    workflow::list_videos(&db, &root).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_queue_items(state: State<'_, AppState>) -> Result<Vec<workflow::QueueItem>, String> {
+    let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    workflow::list_queue(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn enqueue_sources(inputs: Vec<workflow::EnqueueInput>, state: State<'_, AppState>) -> Result<Vec<workflow::EnqueueOutcome>, String> {
+    let out = {
+        let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+        workflow::enqueue(&db, inputs).map_err(|e| e.to_string())?
+    };
+    state.workflow.start_scheduler();
+    state.workflow.emit("queue-updated");
+    Ok(out)
+}
+
+#[tauri::command]
+async fn pause_queue_item(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.workflow.cancel(&id);
+    for _ in 0..50 {
+        if !state.workflow.is_active(&id) { break; }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
+    if state.workflow.is_active(&id) {
+        return Err("任务仍在停止中，请稍后重试".into());
+    }
+    let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    workflow::queue_command(&db, &id, "pause").map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn resume_queue_item(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    workflow::queue_command(&db, &id, "resume").map_err(|e| e.to_string())?;
+    drop(db);
+    state.workflow.start_scheduler();
+    Ok(())
+}
+
+#[tauri::command]
+fn retry_queue_item(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let root = current_task_data_directory(&state)?;
+    let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    workflow::retry_queue(&db, &root, &id)?;
+    drop(db);
+    state.workflow.start_scheduler();
+    Ok(())
+}
+
+#[tauri::command]
+fn requeue_video(video_id: String, asr_backend: Option<String>, asr_config_json: Option<String>, state: State<'_, AppState>) -> Result<workflow::QueueItem, String> {
+    media::validate_job_id(&video_id)?;
+    let root = current_task_data_directory(&state)?;
+    let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    let item = workflow::requeue_video(&db, &root, &video_id, asr_backend.as_deref(), asr_config_json.as_deref())?;
+    drop(db);
+    state.workflow.start_scheduler();
+    state.workflow.emit("queue-updated");
+    Ok(item)
+}
+
+#[tauri::command]
+async fn remove_queue_item(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    if state.workflow.cancel(&id) {
+        for _ in 0..50 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            if !state.workflow.is_active(&id) { break; }
+        }
+    }
+    if state.workflow.is_active(&id) {
+        return Err("任务仍在停止中，请稍后重试".into());
+    }
+    let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    workflow::queue_command(&db, &id, "remove").map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn move_queue_item(id: String, direction: String, state: State<'_, AppState>) -> Result<(), String> {
+    let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    workflow::move_queue(&db, &id, &direction).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_video_results(video_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    media::validate_job_id(&video_id)?;
+    if state.workflow.is_active(&video_id) { return Err("该视频正在处理中，请先等待操作停止".into()); }
+    let root = current_task_data_directory(&state)?;
+    let mut db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    if workflow::has_live_queue(&db, &video_id).map_err(|error| error.to_string())? {
+        return Err("该视频仍在队列中，请先移除队列项".into());
+    }
+    workflow::delete_results(&mut db, &root, &video_id)?;
+    state.workflow.emit("library-updated");
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_video_completely(video_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    media::validate_job_id(&video_id)?;
+    if state.workflow.is_active(&video_id) { return Err("该视频正在处理中，请先等待操作停止".into()); }
+    let root = current_task_data_directory(&state)?;
+    let mut db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    if workflow::has_live_queue(&db, &video_id).map_err(|error| error.to_string())? {
+        return Err("该视频仍在队列中，请先移除队列项".into());
+    }
+    workflow::delete_completely(&mut db, &root, &video_id)?;
+    state.workflow.emit("queue-updated");
+    state.workflow.emit("library-updated");
+    Ok(())
+}
+
+#[tauri::command]
+fn update_translation_segment(video_id: String, segment_id: String, text: String, state: State<'_, AppState>) -> Result<(), String> {
+    let root = current_task_data_directory(&state)?;
+    workflow::mark_translation(&root, &video_id, &segment_id, &text)?;
+    let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    workflow::mark_note_stale(&db, &video_id)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1341,35 +770,45 @@ pub fn run() {
             let database_path = app_data_dir.join("video-notes.db");
             let connection = Connection::open(database_path)
                 .map_err(|error| io::Error::other(error.to_string()))?;
-            initialize_database(&connection)
+            workflow::initialize_database(&connection, &task_data_dir)
                 .map_err(|error| io::Error::other(error.to_string()))?;
+            let database = Arc::new(Mutex::new(connection));
+            let task_data_dir = Arc::new(Mutex::new(task_data_dir));
+            let workflow = Arc::new(workflow::WorkflowState::new(database.clone(), task_data_dir.clone()));
+            workflow.set_app(app.handle().clone());
             app.manage(AppState {
-                database: Mutex::new(connection),
+                database,
                 app_data_dir,
-                task_data_dir: Mutex::new(task_data_dir),
-                cancellations: Mutex::new(media::CancellationMap::new()),
+                task_data_dir,
                 model_download_active: AtomicBool::new(false),
+                workflow,
             });
+            // Recover queued work after the database/filesystem migration. The
+            // scheduler itself verifies reusable media and transcript files.
+            app.state::<AppState>().workflow.start_scheduler();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            list_jobs,
-            reconcile_jobs,
-            save_job,
+            list_videos,
+            list_queue_items,
+            enqueue_sources,
+            pause_queue_item,
+            resume_queue_item,
+            retry_queue_item,
+            requeue_video,
+            remove_queue_item,
+            move_queue_item,
+            delete_video_results,
+            delete_video_completely,
+            update_translation_segment,
             inspect_data_directory,
             choose_data_directory,
             reset_data_directory,
-            open_task_directory,
-            reset_task_media,
-            reset_task_transcript,
-            delete_task,
-            export_task_audio,
+            export_video_audio,
             parse_video_input,
             search_videos,
             inspect_media_tools,
-            prepare_media,
-            load_media,
-            cancel_media_preparation,
+            load_video_media,
             inspect_asr_model,
             download_asr_model,
             delete_asr_model,
@@ -1383,15 +822,12 @@ pub fn run() {
             download_translation_model,
             delete_translation_model,
             open_models_directory,
-            transcribe_media,
-            load_transcript,
-            load_transcript_view,
-            update_transcript_segment,
-            organize_notes,
-            translate_transcript,
-            load_note,
-            export_markdown,
-            system_profile
+            load_video_transcript,
+            update_video_transcript_segment,
+            organize_video_notes,
+            translate_video_transcript,
+            load_video_note,
+            export_markdown
         ])
         .run(tauri::generate_context!())
         .expect("failed to run VideoNotes");
@@ -1399,7 +835,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_directory_contents, job_disk_state, rewrite_local_paths};
+    use super::{copy_directory_contents, rewrite_local_paths};
     use serde_json::json;
     use std::{
         fs,
@@ -1465,41 +901,4 @@ mod tests {
         fs::remove_dir_all(root).expect("remove test directory");
     }
 
-    #[test]
-    fn job_disk_state_detects_latest_recoverable_stage() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("video-notes-reconcile-{}-{unique}", process::id()));
-        let task = root.join("tasks").join("job-1");
-        fs::create_dir_all(&task).expect("create task directory");
-
-        // 目录为空 → 无任何可恢复结果
-        assert_eq!(job_disk_state(&task).0, "failed");
-
-        // 只有媒体清单 → waiting
-        fs::write(task.join("media.json"), "{}").expect("write media.json");
-        assert_eq!(job_disk_state(&task).0, "waiting");
-
-        // 转录完成 → transcribed
-        let transcript_dir = task.join("transcript");
-        fs::create_dir_all(&transcript_dir).expect("create transcript directory");
-        fs::write(
-            transcript_dir.join("transcript.json"),
-            r#"{"segments":[{"id":"0-0","startMs":0,"endMs":1000,"text":"hi"}]}"#,
-        )
-        .expect("write transcript.json");
-        assert_eq!(job_disk_state(&task).0, "transcribed");
-
-        // 笔记已生成 → completed
-        let note_dir = task.join("note");
-        fs::create_dir_all(&note_dir).expect("create note directory");
-        fs::write(note_dir.join("note.json"), r##"{"markdown":"# 标题"}"##)
-            .expect("write note.json");
-        assert_eq!(job_disk_state(&task).0, "completed");
-
-        fs::remove_dir_all(root).expect("remove test directory");
-    }
 }

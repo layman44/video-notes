@@ -1,7 +1,8 @@
 import {
   Box,
-  FileClock,
+  ListChecks,
   Home,
+  Library,
   Search,
   Settings,
   ShieldCheck,
@@ -13,23 +14,24 @@ interface AppShellProps {
   activePage: PageId;
   children: React.ReactNode;
   modelReadiness: ModelReadiness | null;
-  onNavigate: (page: Exclude<PageId, "task-detail">) => void;
+  onNavigate: (page: Exclude<PageId, "video-detail">) => void;
 }
 
 const navItems: Array<{
-  id: Exclude<PageId, "task-detail">;
+  id: Exclude<PageId, "video-detail">;
   label: string;
   icon: LucideIcon;
 }> = [
   { id: "home", label: "首页", icon: Home },
   { id: "search", label: "搜索", icon: Search },
-  { id: "tasks", label: "任务", icon: FileClock },
+  { id: "queue", label: "队列", icon: ListChecks },
+  { id: "library", label: "视频库", icon: Library },
   { id: "models", label: "模型", icon: Box },
   { id: "settings", label: "设置", icon: Settings },
 ];
 
 export function AppShell({ activePage, children, modelReadiness, onNavigate }: AppShellProps) {
-  const normalizedActive = activePage === "task-detail" ? "tasks" : activePage;
+  const normalizedActive = activePage === "video-detail" ? "library" : activePage;
   const readyModelCount = modelReadiness
     ? Number(modelReadiness.asr) + Number(modelReadiness.summary) + Number(Boolean(modelReadiness.translation))
     : 0;

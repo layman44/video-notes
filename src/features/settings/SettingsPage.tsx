@@ -71,7 +71,7 @@ export function SettingsPage({
       if (selected) {
         memoryCachedDataDirectory = selected;
         setDataDirectory(selected);
-        setDirectoryFeedback({ kind: "success", message: "数据目录已更新，已有任务数据已复制到新位置。" });
+        setDirectoryFeedback({ kind: "success", message: "数据目录已更新，已有视频数据已复制到新位置。" });
       }
     } catch (reason) {
       setDirectoryFeedback({ kind: "error", message: reason instanceof Error ? reason.message : String(reason) });
@@ -88,7 +88,7 @@ export function SettingsPage({
       const reset = await runtime.resetDataDirectory();
       memoryCachedDataDirectory = reset;
       setDataDirectory(reset);
-      setDirectoryFeedback({ kind: "success", message: "已恢复默认数据目录，已有任务数据已复制回默认位置。" });
+      setDirectoryFeedback({ kind: "success", message: "已恢复默认数据目录，已有视频数据已复制回默认位置。" });
     } catch (reason) {
       setDirectoryFeedback({ kind: "error", message: reason instanceof Error ? reason.message : String(reason) });
     } finally {
@@ -172,7 +172,7 @@ export function SettingsPage({
         <div className="setting-row data-directory-row">
           <div>
             <strong>视频与解析数据目录</strong>
-            <span>视频、音频切片、转录和 Markdown 笔记均保存在此目录的 tasks 文件夹中</span>
+            <span>视频、音频、转录和 Markdown 笔记均保存在此目录中</span>
           </div>
           <div className="data-directory-controls">
             <code title={dataDirectory?.currentPath}>{dataDirectory?.currentPath ?? "正在读取目录……"}</code>
@@ -198,7 +198,7 @@ export function SettingsPage({
             {directoryFeedback.message}
           </p>
         ) : null}
-        <p className="data-directory-note">更改目录时会复制现有任务数据，原目录暂不删除；模型文件与任务数据库仍保存在应用内部目录。</p>
+        <p className="data-directory-note">更改目录时会复制现有视频数据，原目录暂不删除；模型文件与视频数据库仍保存在应用内部目录。</p>
         <div className="setting-row">
           <div><strong>完成后删除临时音频</strong><span>保留转录和 Markdown，不保留原始音频</span></div>
           <Toggle checked={autoClean} onChange={() => setAutoClean((value) => !value)} label="完成后删除临时音频" />

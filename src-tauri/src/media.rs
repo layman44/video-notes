@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     env, fs,
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
@@ -1109,8 +1108,6 @@ pub fn export_audio(
     }
     Ok(())
 }
-
-pub type CancellationMap = HashMap<String, Arc<AtomicBool>>;
 
 #[cfg(test)]
 mod tests {
