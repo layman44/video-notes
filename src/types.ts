@@ -1,10 +1,42 @@
-export type PageId = "home" | "tasks" | "models" | "settings" | "task-detail";
+export type PageId = "home" | "tasks" | "search" | "models" | "settings" | "task-detail";
+
+export interface SearchResultItem {
+  id: string;
+  title: string;
+  author: string;
+  platform: Platform | string;
+  duration: string;
+  coverUrl?: string | null;
+  videoUrl: string;
+  playCount?: string | null;
+  pubDate?: string | null;
+}
+
+export interface SearchResultResponse {
+  items: SearchResultItem[];
+  totalPages: number;
+  totalCount: number;
+  page: number;
+}
+
+export type SearchOrder = "totalrank" | "click" | "pubdate" | "stow" | "dm";
+export type SearchDurationFilter = 0 | 1 | 2 | 3 | 4;
 
 export type JobStatus = "completed" | "transcribed" | "processing" | "waiting" | "paused" | "failed";
 
 export type Platform = "bilibili" | "douyin";
 
 export type AsrBackend = "funasr-nano" | "openasr-moss-q4";
+
+export const isMossBackend = (backend?: AsrBackend | string | null): boolean =>
+  backend === "openasr-moss-q4" || (typeof backend === "string" && (backend.startsWith("moss") || backend.startsWith("openasr")));
+
+export function modelKindFromId(modelId: string): "asr" | "moss" | "translation" | "summary" {
+  if (modelId.startsWith("moss") || modelId.startsWith("openasr")) return "moss";
+  if (modelId.startsWith("milmmt") || modelId.startsWith("translation")) return "translation";
+  if (modelId.startsWith("qwen") || modelId.startsWith("summary")) return "summary";
+  return "asr";
+}
 
 export interface MossAsrConfig {
   chunkSeconds: number;
@@ -29,6 +61,23 @@ export type JobPhase =
   | "translation"
   | "summary";
 
+export type JobErrorCode =
+  | "MODEL_NOT_INSTALLED"
+  | "USER_CANCELLED"
+  | "DOWNLOAD_FAILED"
+  | "TRANSCRIPTION_FAILED"
+  | "TRANSLATION_FAILED"
+  | "SUMMARY_FAILED"
+  | "ALREADY_ACTIVE"
+  | "ALREADY_DOWNLOADING"
+  | "UNKNOWN_ERROR";
+
+export interface AppError {
+  code: JobErrorCode | string;
+  message: string;
+  details?: string;
+}
+
 export interface Job {
   id: string;
   title: string;
@@ -46,6 +95,7 @@ export interface Job {
   thumbnailUrl?: string;
   asrBackend?: AsrBackend;
   asrConfigJson?: string;
+  errorCode?: JobErrorCode;
   errorMessage?: string;
   statusMessage?: string;
 }

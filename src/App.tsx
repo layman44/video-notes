@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JobActionHandlers } from "./components/JobTable";
 import { AppShell } from "./components/AppShell";
 import { HomePage } from "./features/home/HomePage";
 import { ModelsPage } from "./features/models/ModelsPage";
+import { SearchPage } from "./features/search/SearchPage";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { TaskDetailPage } from "./features/task/TaskDetailPage";
 import { TasksPage } from "./features/task/TasksPage";
 import { loadAsrSettings, loadPlaybackPreferences, savePlaybackPreferences } from "./lib/preferences";
-import { runtime } from "./lib/runtime";
-import type { Job, JobPhase, ModelReadiness, PageId, SourcePreview } from "./types";
+import { normalizeAppError, runtime } from "./lib/runtime";
+import { isMossBackend, type Job, type JobPhase, type ModelReadiness, type PageId, type SearchResultItem, type SourcePreview } from "./types";
 
 function safeFilename(title: string) {
   return title.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_").trim() || "video-notes";
@@ -23,6 +24,7 @@ export default function App() {
     () => loadPlaybackPreferences().autoPlayOnTranscriptClick,
   );
   const [noteRevisions, setNoteRevisions] = useState<Record<string, number>>({});
+  const jobExecutionRuns = useRef<Record<string, number>>({});
 
   useEffect(() => {
     let active = true;
@@ -80,23 +82,43 @@ export default function App() {
     return Math.min(100, Math.max(0, Math.round((completed / total) * 100)));
   }, []);
 
-  const runTranscription = useCallback((job: Job) => {
+  const runTranscription = useCallback((job: Job, resume = false) => {
+    const runId = (jobExecutionRuns.current[job.id] ?? 0) + 1;
+    jobExecutionRuns.current[job.id] = runId;
     void (async () => {
       try {
+        const isMoss = isMossBackend(job.asrBackend);
+        const asrStatus = isMoss
+          ? await runtime.inspectMossModel()
+          : await runtime.inspectAsrModel();
+        if (jobExecutionRuns.current[job.id] !== runId) return;
+        if (!asrStatus.installed) {
+          applyJobPatch(job.id, {
+            status: "waiting",
+            progress: 0,
+            phase: undefined,
+            phaseCompleted: undefined,
+            phaseTotal: undefined,
+            phaseUnit: undefined,
+            updatedAt: "刚刚",
+            statusMessage: `请先到“模型”页面下载 ${asrStatus.name}`,
+            errorMessage: undefined,
+            errorCode: "MODEL_NOT_INSTALLED",
+          });
+          setModelReadiness((current) => ({ asr: false, summary: current?.summary ?? false, translation: current?.translation ?? false }));
+          return;
+        }
+
         await runtime.transcribeMedia(
           job.id,
           (phaseEvent) => {
-            if (phaseEvent.state === "started") {
+            if (jobExecutionRuns.current[job.id] !== runId) return;
+            if (phaseEvent.state === "completed") {
               applyJobPatch(job.id, {
                 status: "processing",
                 phase: phaseEvent.phase as JobPhase,
-                phaseCompleted: undefined,
-                phaseTotal: undefined,
-                phaseUnit: undefined,
-                progress: 0,
                 updatedAt: "刚刚",
                 statusMessage: phaseEvent.message,
-                errorMessage: undefined,
               });
             } else {
               applyJobPatch(job.id, {
@@ -108,6 +130,7 @@ export default function App() {
             }
           },
           (phaseProgress) => {
+            if (jobExecutionRuns.current[job.id] !== runId) return;
             applyJobPatch(job.id, {
               status: "processing",
               phase: phaseProgress.phase as JobPhase,
@@ -120,7 +143,9 @@ export default function App() {
               errorMessage: undefined,
             });
           },
+          resume,
         );
+        if (jobExecutionRuns.current[job.id] !== runId) return;
         applyJobPatch(job.id, {
           status: "transcribed",
           progress: 100,
@@ -133,36 +158,28 @@ export default function App() {
           errorMessage: undefined,
         });
       } catch (reason) {
-        const message = reason instanceof Error ? reason.message : String(reason);
-        if (message.includes("MODEL_NOT_INSTALLED")) {
-          applyJobPatch(job.id, {
-            status: "waiting",
-            progress: 0,
-            phase: undefined,
-            phaseCompleted: undefined,
-            phaseTotal: undefined,
-            phaseUnit: undefined,
-            updatedAt: "刚刚",
-            statusMessage: message.replace(/^.*MODEL_NOT_INSTALLED:/, ""),
-            errorMessage: undefined,
-          });
-          setModelReadiness((current) => ({ asr: false, summary: current?.summary ?? false, translation: current?.translation ?? false }));
-          return;
-        }
+        if (jobExecutionRuns.current[job.id] !== runId) return;
+        const err = normalizeAppError(reason);
+        const isCancelled = err.code === "USER_CANCELLED";
         applyJobPatch(job.id, {
-          status: message.includes("取消") ? "paused" : "failed",
+          status: isCancelled ? "paused" : "failed",
           updatedAt: "刚刚",
-          errorMessage: message,
+          errorMessage: isCancelled ? undefined : err.message,
+          errorCode: isCancelled ? "USER_CANCELLED" : "TRANSCRIPTION_FAILED",
+          statusMessage: isCancelled ? "转写已暂停" : undefined,
         });
       }
     })();
   }, [applyJobPatch, phasePercent]);
 
-  const runPipeline = useCallback((job: Job, skipMedia = false) => {
+  const runPipeline = useCallback((job: Job, skipMedia = false, resume = false) => {
+    const runId = (jobExecutionRuns.current[job.id] ?? 0) + 1;
+    jobExecutionRuns.current[job.id] = runId;
     void (async () => {
       try {
         if (!skipMedia) {
           await runtime.prepareMedia(job.id, job.sourceUrl, (mediaProgress) => {
+            if (jobExecutionRuns.current[job.id] !== runId) return;
             const phase: JobPhase = mediaProgress.stage === "download" ? "media_download" : "media_normalize";
             applyJobPatch(job.id, {
               status: "processing",
@@ -174,9 +191,11 @@ export default function App() {
               updatedAt: "刚刚",
               statusMessage: mediaProgress.message,
               errorMessage: undefined,
+              errorCode: undefined,
             });
           });
         }
+        if (jobExecutionRuns.current[job.id] !== runId) return;
         applyJobPatch(job.id, {
           status: "waiting",
           progress: 0,
@@ -187,32 +206,40 @@ export default function App() {
           updatedAt: "刚刚",
           statusMessage: "音频已准备完成，正在启动语音识别模型……",
           errorMessage: undefined,
+          errorCode: undefined,
         });
-        runTranscription(job);
+        runTranscription(job, resume);
       } catch (reason) {
-        const message = reason instanceof Error ? reason.message : String(reason);
+        if (jobExecutionRuns.current[job.id] !== runId) return;
+        const err = normalizeAppError(reason);
+        const isCancelled = err.code === "USER_CANCELLED";
         applyJobPatch(job.id, {
-          status: message.includes("取消") ? "paused" : "failed",
+          status: isCancelled ? "paused" : "failed",
           updatedAt: "刚刚",
-          errorMessage: message,
+          errorMessage: isCancelled ? undefined : err.message,
+          errorCode: isCancelled ? "USER_CANCELLED" : "DOWNLOAD_FAILED",
+          statusMessage: isCancelled ? "下载已暂停" : undefined,
         });
       }
     })();
   }, [applyJobPatch, runTranscription]);
 
   const startJob = useCallback((preview: SourcePreview) => {
+    const activeJob = jobs.find((item) => item.status === "processing");
+    const isBusy = Boolean(activeJob);
     const job: Job = {
       id: `job-${Date.now()}`,
       title: preview.title,
       platform: preview.platform,
       duration: preview.duration,
       updatedAt: "刚刚",
-      status: "processing",
+      status: isBusy ? "waiting" : "processing",
       progress: 0,
-      phase: "media_download",
-      phaseCompleted: 0,
-      phaseTotal: 100,
-      phaseUnit: "percent",
+      phase: isBusy ? undefined : "media_download",
+      phaseCompleted: isBusy ? undefined : 0,
+      phaseTotal: isBusy ? undefined : 100,
+      phaseUnit: isBusy ? undefined : "percent",
+      statusMessage: isBusy ? "等待转写（已有其他任务正在处理）" : "正在准备本地视频与音频……",
       sourceUrl: preview.sourceUrl,
       thumbnailUrl: preview.thumbnailUrl,
       asrBackend: loadAsrSettings().backend,
@@ -221,23 +248,36 @@ export default function App() {
     setJobs((current) => [job, ...current]);
     setSelectedJobId(job.id);
     setActivePage("task-detail");
+    if (isBusy) {
+      void runtime.saveJob(job);
+      window.alert(`当前已有任务【${activeJob?.title}】正在处理中，同一时刻只能运行一个转录任务，新任务已保存为待命状态。`);
+      return;
+    }
     if (runtime.isDesktop()) {
       // Persist the backend snapshot before the native command reads it.
       void runtime.saveJob(job).then(() => runPipeline(job));
     } else {
       void runtime.saveJob(job);
     }
-  }, [runPipeline]);
+  }, [jobs, runPipeline]);
 
-  const retryPipeline = useCallback((job: Job) => {
+  const retryPipeline = useCallback((job: Job, resume = false, forceRedownload = false) => {
+    const activeJob = jobs.find((item) => item.id !== job.id && item.status === "processing");
+    if (activeJob) {
+      window.alert(`当前已有任务【${activeJob.title}】正在处理中，同一时刻只能运行一个转录任务，请先暂停该任务或等待其完成。`);
+      return;
+    }
+
     const downstreamPhase = [
       "recognition", "pause_alignment", "verification", "boundary_review", "word_alignment", "standardization", "semantic_segmentation", "translation", "summary",
     ].includes(job.phase ?? "");
-    const mediaAlreadyPrepared = job.status === "waiting"
-      || job.status === "transcribed"
-      || job.status === "completed"
-      || downstreamPhase;
+    const mediaAlreadyPrepared = !forceRedownload && (
+      (job.status === "transcribed" || job.status === "completed" || downstreamPhase)
+      && job.phase !== "media_download"
+      && job.phase !== "media_normalize"
+    );
     const asrSettings = loadAsrSettings();
+    const isMoss = isMossBackend(job.asrBackend || asrSettings.backend);
     const retryingJob: Job = {
       ...job,
       status: "processing",
@@ -248,25 +288,34 @@ export default function App() {
       phaseUnit: undefined,
       updatedAt: "刚刚",
       errorMessage: undefined,
-      statusMessage: mediaAlreadyPrepared ? "正在重新启动语音转录……" : "正在重新准备本地视频与音频……",
+      errorCode: undefined,
+      statusMessage: resume && isMoss
+        ? "正在从断点恢复 MOSS 语音转录……"
+        : mediaAlreadyPrepared
+          ? "正在重新启动语音转录……"
+          : "正在重新准备本地视频与音频……",
       asrBackend: asrSettings.backend,
       asrConfigJson: JSON.stringify(asrSettings.moss),
     };
     setJobs((current) => current.map((item) => (item.id === job.id ? retryingJob : item)));
     // A retry may skip media preparation, so wait for the DB snapshot before
     // starting native transcription; otherwise it could pick the old backend.
-    void runtime.saveJob(retryingJob).then(() => runPipeline(retryingJob, mediaAlreadyPrepared));
-  }, [runPipeline]);
+    void runtime.saveJob(retryingJob).then(() => runPipeline(retryingJob, mediaAlreadyPrepared, resume));
+  }, [jobs, runPipeline]);
 
   const translateJob = useCallback((job: Job) => {
+    const runId = (jobExecutionRuns.current[job.id] ?? 0) + 1;
+    jobExecutionRuns.current[job.id] = runId;
     void (async () => {
       const returnStatus = job.status === "completed" ? "completed" : "transcribed";
       try {
         const translationStatus = await runtime.inspectTranslationModel();
+        if (jobExecutionRuns.current[job.id] !== runId) return;
         if (!translationStatus.installed) {
           setModelReadiness((current) => ({ asr: current?.asr ?? true, summary: current?.summary ?? false, translation: false }));
           applyJobPatch(job.id, {
             status: returnStatus,
+            errorCode: "MODEL_NOT_INSTALLED",
             statusMessage: "请先到“模型”页面下载 MiLMMT 翻译模型，再手动开始翻译。",
           });
           return;
@@ -281,8 +330,10 @@ export default function App() {
           updatedAt: "刚刚",
           statusMessage: "正在翻译标准转录……",
           errorMessage: undefined,
+          errorCode: undefined,
         });
         await runtime.translateTranscript(job.id, (translationProgress) => {
+          if (jobExecutionRuns.current[job.id] !== runId) return;
           applyJobPatch(job.id, {
             status: "processing",
             phase: "translation",
@@ -294,6 +345,7 @@ export default function App() {
             updatedAt: "刚刚",
           });
         });
+        if (jobExecutionRuns.current[job.id] !== runId) return;
         applyJobPatch(job.id, {
           status: returnStatus,
           progress: 100,
@@ -301,6 +353,7 @@ export default function App() {
           phaseCompleted: undefined,
           phaseTotal: undefined,
           phaseUnit: undefined,
+          errorCode: undefined,
           statusMessage: returnStatus === "completed"
             ? "翻译完成。现有笔记不会自动重写；如需让笔记使用新翻译，可点击“重新生成笔记”。"
             : "翻译完成。标准转录仍可继续人工修改；修改过的段落会自动使对应翻译失效。",
@@ -308,28 +361,35 @@ export default function App() {
         });
         setNoteRevisions((current) => ({ ...current, [job.id]: (current[job.id] ?? 0) + 1 }));
       } catch (reason) {
-        const message = reason instanceof Error ? reason.message : String(reason);
+        if (jobExecutionRuns.current[job.id] !== runId) return;
+        const err = normalizeAppError(reason);
+        const isCancelled = err.code === "USER_CANCELLED";
         applyJobPatch(job.id, {
           status: returnStatus,
           phase: undefined,
           phaseCompleted: undefined,
           phaseTotal: undefined,
           phaseUnit: undefined,
-          statusMessage: "翻译未完成，标准转录已保留。",
-          errorMessage: message,
+          statusMessage: isCancelled ? "翻译已取消，标准转录已保留。" : "翻译未完成，标准转录已保留。",
+          errorMessage: isCancelled ? undefined : err.message,
+          errorCode: isCancelled ? "USER_CANCELLED" : "TRANSLATION_FAILED",
         });
       }
     })();
   }, [applyJobPatch, phasePercent]);
 
   const organizeJob = useCallback((job: Job, force = false) => {
+    const runId = (jobExecutionRuns.current[job.id] ?? 0) + 1;
+    jobExecutionRuns.current[job.id] = runId;
     void (async () => {
       try {
         const summaryStatus = await runtime.inspectSummaryModel();
+        if (jobExecutionRuns.current[job.id] !== runId) return;
         if (!summaryStatus.installed) {
           setModelReadiness((current) => ({ asr: current?.asr ?? true, summary: false, translation: current?.translation ?? false }));
           applyJobPatch(job.id, {
             status: "transcribed",
+            errorCode: "MODEL_NOT_INSTALLED",
             statusMessage: "请先到“模型”页面下载 Qwen3.5 总结模型，再手动生成笔记。",
           });
           return;
@@ -344,8 +404,10 @@ export default function App() {
           updatedAt: "刚刚",
           statusMessage: "正在根据当前标准转录生成笔记……",
           errorMessage: undefined,
+          errorCode: undefined,
         });
         await runtime.organizeNotes(job, (summaryProgress) => {
+          if (jobExecutionRuns.current[job.id] !== runId) return;
           applyJobPatch(job.id, {
             status: "processing",
             phase: "summary",
@@ -357,6 +419,7 @@ export default function App() {
             statusMessage: summaryProgress.message,
           });
         }, force);
+        if (jobExecutionRuns.current[job.id] !== runId) return;
         applyJobPatch(job.id, {
           status: "completed",
           progress: 100,
@@ -367,18 +430,22 @@ export default function App() {
           updatedAt: "刚刚",
           statusMessage: "笔记已生成",
           errorMessage: undefined,
+          errorCode: undefined,
         });
         setNoteRevisions((current) => ({ ...current, [job.id]: (current[job.id] ?? 0) + 1 }));
       } catch (reason) {
-        const message = reason instanceof Error ? reason.message : String(reason);
+        if (jobExecutionRuns.current[job.id] !== runId) return;
+        const err = normalizeAppError(reason);
+        const isCancelled = err.code === "USER_CANCELLED";
         applyJobPatch(job.id, {
           status: "transcribed",
           phase: undefined,
           phaseCompleted: undefined,
           phaseTotal: undefined,
           phaseUnit: undefined,
-          statusMessage: "笔记生成失败；标准转录已保留，可稍后重试。",
-          errorMessage: message,
+          statusMessage: isCancelled ? "笔记生成已取消；标准转录已保留。" : "笔记生成失败；标准转录已保留，可稍后重试。",
+          errorMessage: isCancelled ? undefined : err.message,
+          errorCode: isCancelled ? "USER_CANCELLED" : "SUMMARY_FAILED",
         });
       }
     })();
@@ -390,47 +457,14 @@ export default function App() {
 
   const redownloadJob = useCallback(async (job: Job) => {
     await runtime.resetTaskMedia(job.id);
-    const asrSettings = loadAsrSettings();
-    const restartingJob: Job = {
-      ...job,
-      status: "processing",
-      progress: 0,
-      phase: "media_download",
-      phaseCompleted: 0,
-      phaseTotal: 100,
-      phaseUnit: "percent",
-      updatedAt: "刚刚",
-      errorMessage: undefined,
-      statusMessage: "正在重新下载本地视频……",
-      asrBackend: asrSettings.backend,
-      asrConfigJson: JSON.stringify(asrSettings.moss),
-    };
-    setJobs((current) => current.map((item) => item.id === job.id ? restartingJob : item));
-    await runtime.saveJob(restartingJob);
-    runPipeline(restartingJob);
-  }, [runPipeline]);
+    await runtime.resetTaskTranscript(job.id);
+    retryPipeline(job, false, true);
+  }, [retryPipeline]);
 
   const retranscribeJob = useCallback(async (job: Job) => {
     await runtime.resetTaskTranscript(job.id);
-    const asrSettings = loadAsrSettings();
-    const retranscribingJob: Job = {
-      ...job,
-      status: "processing",
-      progress: 0,
-      phase: "recognition",
-      phaseCompleted: undefined,
-      phaseTotal: undefined,
-      phaseUnit: undefined,
-      updatedAt: "刚刚",
-      errorMessage: undefined,
-      statusMessage: "正在重新进行本地语音转写……",
-      asrBackend: asrSettings.backend,
-      asrConfigJson: JSON.stringify(asrSettings.moss),
-    };
-    setJobs((current) => current.map((item) => item.id === job.id ? retranscribingJob : item));
-    await runtime.saveJob(retranscribingJob);
-    runPipeline(retranscribingJob, true);
-  }, [runPipeline]);
+    retryPipeline(job, false);
+  }, [retryPipeline]);
 
   const exportJobAudio = useCallback(async (job: Job) => {
     const path = await runtime.exportTaskAudio(job.id, `${safeFilename(job.title)}.m4a`);
@@ -461,16 +495,111 @@ export default function App() {
     )));
   }, []);
 
+  const resetJob = useCallback(async (job: Job) => {
+    jobExecutionRuns.current[job.id] = (jobExecutionRuns.current[job.id] ?? 0) + 1;
+    await runtime.cancelMedia(job.id);
+    const resetPatch: Partial<Job> = {
+      status: "waiting",
+      progress: 0,
+      phase: undefined,
+      phaseCompleted: undefined,
+      phaseTotal: undefined,
+      phaseUnit: undefined,
+      updatedAt: "刚刚",
+      statusMessage: "任务已重置，可随时点击“开始转写”",
+      errorMessage: undefined,
+      errorCode: undefined,
+    };
+    applyJobPatch(job.id, resetPatch);
+    void runtime.saveJob({ ...job, ...resetPatch });
+  }, [applyJobPatch]);
+
   const updateAutoPlayOnTranscriptClick = useCallback((enabled: boolean) => {
     setAutoPlayOnTranscriptClick(enabled);
     savePlaybackPreferences({ autoPlayOnTranscriptClick: enabled });
   }, []);
 
+  const batchAddJobsFromSearch = useCallback(async (items: SearchResultItem[]) => {
+    const asrSettings = loadAsrSettings();
+    const newJobs: Job[] = items.map((item, idx) => ({
+      id: `job-${Date.now()}-${idx}`,
+      title: item.title,
+      platform: item.platform === "douyin" ? "douyin" : "bilibili",
+      duration: item.duration,
+      updatedAt: "刚刚",
+      status: "waiting",
+      progress: 0,
+      phase: undefined,
+      phaseCompleted: undefined,
+      phaseTotal: undefined,
+      phaseUnit: undefined,
+      statusMessage: "已加入任务列表，等待转录",
+      sourceUrl: item.videoUrl,
+      thumbnailUrl: item.coverUrl ?? undefined,
+      asrBackend: asrSettings.backend,
+      asrConfigJson: JSON.stringify(asrSettings.moss),
+    }));
+
+    for (const j of newJobs) {
+      await runtime.saveJob(j);
+    }
+    setJobs((current) => [...newJobs, ...current]);
+    setActivePage("tasks");
+    window.alert(`已成功将 ${newJobs.length} 个视频加入任务列表！`);
+  }, []);
+
+  const startSingleJobFromSearch = useCallback((item: SearchResultItem) => {
+    const cleanItemUrl = item.videoUrl.trim();
+    const bvMatch = cleanItemUrl.match(/BV[a-zA-Z0-9]+/i) || item.id.match(/BV[a-zA-Z0-9]+/i);
+    const existing = jobs.find((j) => {
+      if (j.sourceUrl === cleanItemUrl || j.sourceUrl === item.id) return true;
+      if (bvMatch && j.sourceUrl.includes(bvMatch[0])) return true;
+      return false;
+    });
+
+    if (existing) {
+      if (existing.status === "completed" || existing.status === "transcribed" || existing.status === "processing") {
+        openJob(existing);
+        return;
+      }
+      if (existing.status === "waiting" || existing.status === "paused" || existing.status === "failed") {
+        openJob(existing);
+        retryPipeline(existing);
+        return;
+      }
+    }
+
+    startJob({
+      title: item.title,
+      platform: item.platform === "douyin" ? "douyin" : "bilibili",
+      duration: item.duration,
+      sourceUrl: item.videoUrl,
+      thumbnailUrl: item.coverUrl ?? undefined,
+      author: item.author,
+    });
+  }, [jobs, openJob, retryPipeline, startJob]);
+
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? jobs[0];
 
   return (
     <AppShell activePage={activePage} modelReadiness={modelReadiness} onNavigate={setActivePage}>
-      {activePage === "home" ? <HomePage jobs={jobs} onOpenJob={openJob} onStart={startJob} jobActions={jobActions} /> : null}
+      {activePage === "home" ? (
+        <HomePage
+          jobs={jobs}
+          onOpenJob={openJob}
+          onStart={startJob}
+          onViewAll={() => setActivePage("tasks")}
+          jobActions={jobActions}
+        />
+      ) : null}
+      {activePage === "search" ? (
+        <SearchPage
+          jobs={jobs}
+          onBatchAddJobs={batchAddJobsFromSearch}
+          onStartSingleJob={startSingleJobFromSearch}
+          onOpenJob={openJob}
+        />
+      ) : null}
       {activePage === "tasks" ? <TasksPage jobs={jobs} onOpenJob={openJob} jobActions={jobActions} /> : null}
       {activePage === "models" ? <ModelsPage onStatusChange={setModelReadiness} /> : null}
       {activePage === "settings" ? (
@@ -486,7 +615,8 @@ export default function App() {
           onNavigateToModels={() => setActivePage("models")}
           onComplete={completeJob}
           onCancelMedia={() => runtime.cancelMedia(selectedJob.id)}
-          onRetryMedia={() => retryPipeline(selectedJob)}
+          onResetJob={() => resetJob(selectedJob)}
+          onRetryMedia={(options) => retryPipeline(selectedJob, options?.resume)}
           onTranslate={() => translateJob(selectedJob)}
           onOrganize={() => organizeJob(selectedJob)}
           onReorganize={() => organizeJob(selectedJob, true)}

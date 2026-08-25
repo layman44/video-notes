@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
-import { isTauri, runtime } from "./runtime";
-import type { AsrModelStatus, ModelDownloadProgress, ModelReadiness, SummaryModelStatus, TranslationModelStatus } from "../types";
+import { isTauri, normalizeAppError, runtime } from "./runtime";
+import { modelKindFromId, type AsrModelStatus, type ModelDownloadProgress, type ModelReadiness, type SummaryModelStatus, type TranslationModelStatus } from "../types";
 
 export type ModelKind = "asr" | "moss" | "summary" | "translation";
 
@@ -42,18 +42,7 @@ class ModelDownloadStore {
     this.initialized = true;
 
     void listen<ModelDownloadProgress>("model-download-progress", ({ payload }) => {
-      const isAsr =
-        payload.modelId === "funasr-nano" ||
-        payload.modelId.includes("funasr") ||
-        payload.modelId.includes("nano");
-      const isMoss = payload.modelId.includes("moss") || payload.modelId.includes("openasr");
-      const isTranslation =
-        payload.modelId.includes("milmmt") ||
-        payload.modelId.includes("translation");
-      const isSummary =
-        payload.modelId.includes("qwen") ||
-        payload.modelId.includes("summary");
-      const kind: ModelKind = isMoss ? "moss" : isAsr ? "asr" : isTranslation ? "translation" : isSummary ? "summary" : "asr";
+      const kind: ModelKind = modelKindFromId(payload.modelId);
 
       this.update((draft) => {
         draft.progress[kind] = payload.progress;
@@ -150,15 +139,15 @@ class ModelDownloadStore {
         }
         await this.refresh(onStatusChange);
       } catch (reason) {
-        const text = reason instanceof Error ? reason.message : String(reason);
-        if (text.includes("已经在下载中") || text.includes("正在下载中")) {
+        const err = normalizeAppError(reason);
+        if (err.code === "ALREADY_DOWNLOADING") {
           this.update((draft) => {
             draft.downloadingKind = kind;
             draft.error[kind] = "";
           });
         } else {
           this.update((draft) => {
-            draft.error[kind] = text;
+            draft.error[kind] = err.message;
             draft.downloadingKind = null;
           });
         }

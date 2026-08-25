@@ -15,24 +15,34 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
 
+const AUDIO_CHUNK_SECONDS: f64 = 2.0 * 60.0;
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
-
-const AUDIO_CHUNK_SECONDS: f64 = 2.0 * 60.0;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+pub(crate) fn clean_path(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if s.starts_with(r"\\?\") || s.starts_with("//?/") {
+        PathBuf::from(&s[4..])
+    } else {
+        path.to_path_buf()
+    }
+}
+
 fn media_command(program: &Path) -> Command {
+    let clean_prog = clean_path(program);
     #[cfg(windows)]
     {
-        let mut command = Command::new(program);
+        let mut command = Command::new(clean_prog);
         command.creation_flags(CREATE_NO_WINDOW);
         command
     }
     #[cfg(not(windows))]
     {
-        Command::new(program)
+        Command::new(clean_prog)
     }
 }
 
@@ -120,44 +130,25 @@ enum OutputStream {
     Stderr,
 }
 
-fn tool_status(name: &'static str, path: Option<PathBuf>, version_arg: &str) -> MediaToolStatus {
-    let version = path.as_ref().and_then(|tool_path| {
-        media_command(tool_path)
-            .arg(version_arg)
-            .stdin(Stdio::null())
-            .output()
-            .ok()
-            .and_then(|output| {
-                let text = if output.stdout.is_empty() {
-                    String::from_utf8_lossy(&output.stderr).into_owned()
-                } else {
-                    String::from_utf8_lossy(&output.stdout).into_owned()
-                };
-                text.lines()
-                    .next()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(str::to_owned)
-            })
-    });
-
+fn tool_status(name: &'static str, path: Option<PathBuf>) -> MediaToolStatus {
     MediaToolStatus {
         name,
         available: path.is_some(),
         path: path.map(|value| value.to_string_lossy().into_owned()),
-        version,
+        version: None,
     }
 }
 
 fn candidate_tool_dirs(app: &AppHandle) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(override_dir) = env::var_os("VIDEO_NOTES_TOOLS_DIR") {
-        candidates.push(PathBuf::from(override_dir));
+        candidates.push(clean_path(&PathBuf::from(override_dir)));
     }
     if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.push(resource_dir.join("resources").join("tools"));
-        candidates.push(resource_dir.join("tools"));
-        candidates.push(resource_dir);
+        let clean_res = clean_path(&resource_dir);
+        candidates.push(clean_res.join("resources").join("tools"));
+        candidates.push(clean_res.join("tools"));
+        candidates.push(clean_res);
     }
     candidates.push(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -167,7 +158,7 @@ fn candidate_tool_dirs(app: &AppHandle) -> Vec<PathBuf> {
     candidates
 }
 
-fn find_on_path(filename: &str) -> Option<PathBuf> {
+pub(crate) fn find_on_path(filename: &str) -> Option<PathBuf> {
     env::var_os("PATH").and_then(|paths| {
         env::split_paths(&paths)
             .map(|directory| directory.join(filename))
@@ -184,9 +175,9 @@ pub(crate) fn find_tool(app: &AppHandle, filename: &str) -> Option<PathBuf> {
 }
 
 pub fn inspect_media_tools(app: &AppHandle) -> MediaToolsStatus {
-    let yt_dlp = tool_status("yt-dlp", find_tool(app, "yt-dlp.exe"), "--version");
-    let ffmpeg = tool_status("FFmpeg", find_tool(app, "ffmpeg.exe"), "-version");
-    let ffprobe = tool_status("ffprobe", find_tool(app, "ffprobe.exe"), "-version");
+    let yt_dlp = tool_status("yt-dlp", find_tool(app, "yt-dlp.exe"));
+    let ffmpeg = tool_status("FFmpeg", find_tool(app, "ffmpeg.exe"));
+    let ffprobe = tool_status("ffprobe", find_tool(app, "ffprobe.exe"));
     MediaToolsStatus {
         ready: yt_dlp.available && ffmpeg.available && ffprobe.available,
         yt_dlp,
@@ -402,7 +393,9 @@ fn execute_probe_command(
         "--no-write-subs",
         "--no-write-auto-subs",
         "--socket-timeout",
-        "20",
+        "15",
+        "--retries",
+        "3",
         "--dump-single-json",
     ]);
 
@@ -573,6 +566,10 @@ fn run_ytdlp_download(
     cookie_file: Option<&Path>,
     cancelled: &AtomicBool,
 ) -> Result<PathBuf, String> {
+    let ffmpeg_dir = tools.ffmpeg.parent().unwrap_or(Path::new("."));
+    let ffmpeg_dir_clean = clean_path(ffmpeg_dir);
+    let source_dir_clean = clean_path(source_dir);
+
     let mut command = media_command(&tools.yt_dlp);
     command.args([
         "--ignore-config",
@@ -581,6 +578,10 @@ fn run_ytdlp_download(
         "--no-write-subs",
         "--no-write-auto-subs",
         "--no-write-comments",
+        "--socket-timeout",
+        "15",
+        "--retries",
+        "3",
         "--write-thumbnail",
         "--convert-thumbnails",
         "jpg",
@@ -599,17 +600,28 @@ fn run_ytdlp_download(
         "mp4",
         "--paths",
     ])
-    .arg(source_dir)
+    .arg(&source_dir_clean)
     .args(["--output", "video.%(ext)s", "--ffmpeg-location"])
-    .arg(tools.ffmpeg.parent().unwrap_or(Path::new(".")));
+    .arg(&ffmpeg_dir_clean);
 
     if let Some(cookies) = cookie_file {
-        command.arg("--cookies").arg(cookies);
+        command.arg("--cookies").arg(clean_path(cookies));
         command.arg("--user-agent").arg(BROWSER_USER_AGENT);
         command.args(["--add-header", "Referer:https://www.douyin.com/"]);
+    } else {
+        command.arg("--user-agent").arg(BROWSER_USER_AGENT);
+        command.args(["--add-header", "Referer:https://www.bilibili.com/"]);
     }
 
     command.arg(source_url);
+
+    println!("\n========================================================");
+    println!("[VIDEO_DOWNLOAD_START]");
+    println!("  Job ID:     {}", job_id);
+    println!("  Source URL: {}", source_url);
+    println!("  Target Dir: {}", source_dir.display());
+    println!("  Command:    {:?}", command);
+    println!("========================================================\n");
 
     let mut child = command
         .stdin(Stdio::null())
@@ -635,6 +647,7 @@ fn run_ytdlp_download(
         while let Ok((stream, line)) = receiver.try_recv() {
             match stream {
                 OutputStream::Stdout => {
+                    println!("[yt-dlp stdout] {}", line);
                     if let Some(progress) = parse_percent(&line) {
                         emit_progress(
                             app,
@@ -645,7 +658,10 @@ fn run_ytdlp_download(
                         );
                     }
                 }
-                OutputStream::Stderr => error_lines.push(line),
+                OutputStream::Stderr => {
+                    println!("[yt-dlp stderr] {}", line);
+                    error_lines.push(line);
+                }
             }
         }
 
@@ -666,16 +682,20 @@ fn run_ytdlp_download(
     let _ = stderr_reader.join();
     while let Ok((stream, line)) = receiver.try_recv() {
         if matches!(stream, OutputStream::Stderr) {
+            println!("[yt-dlp stderr] {}", line);
             error_lines.push(line);
         }
     }
     if !status.success() {
+        let err_summary = error_lines.join("\n");
+        println!("\n[VIDEO_DOWNLOAD_FAILED] status: {:?}, stderr:\n{}\n", status, err_summary);
         return Err(friendly_process_error(
-            &error_lines.join("\n"),
+            &err_summary,
             "视频下载失败",
         ));
     }
 
+    println!("\n[VIDEO_DOWNLOAD_SUCCESS] Job ID: {}\n", job_id);
     emit_progress(app, job_id, "download", 100, "视频已保存到本地");
     find_video_file(source_dir)
 }
@@ -761,20 +781,30 @@ fn normalize_audio(
     tools: &MediaToolPaths,
     job_id: &str,
     source_file: &Path,
+    task_dir: &Path,
     chunks_dir: &Path,
     duration_seconds: f64,
     cancelled: &AtomicBool,
 ) -> Result<Vec<AudioChunk>, String> {
     fs::create_dir_all(chunks_dir).map_err(|error| format!("无法创建音频缓存目录：{error}"))?;
     emit_progress(app, job_id, "normalize", 0, "正在提取与优化音频……");
-    let output_pattern = chunks_dir.join("chunk-%03d.wav");
-    let segment_list = chunks_dir.join("chunks.csv");
+
+    let clean_task_dir = clean_path(task_dir);
+    let chunks_dir_clean = clean_path(chunks_dir);
+    let source_file_clean = clean_path(source_file);
+    let media_wav = clean_task_dir.join("media.wav");
+
+    println!("\n========================================================");
+    println!("[AUDIO_EXTRACT_START]");
+    println!("  Job ID:      {}", job_id);
+    println!("  Source File: {}", source_file_clean.display());
+    println!("  Media WAV:   {}", media_wav.display());
+    println!("========================================================\n");
+
     let mut child = media_command(&tools.ffmpeg)
         .args(["-hide_banner", "-nostdin", "-y", "-i"])
-        .arg(source_file)
+        .arg(&source_file_clean)
         .args([
-            "-map",
-            "0:a:0",
             "-vn",
             "-map_metadata",
             "-1",
@@ -786,19 +816,11 @@ fn normalize_audio(
             "pcm_s16le",
             "-threads",
             "1",
-            "-f",
-            "segment",
-            "-segment_time",
-            "120",
-            "-reset_timestamps",
-            "1",
-            "-segment_list_type",
-            "csv",
-            "-segment_list",
+            "-progress",
+            "pipe:1",
+            "-nostats",
         ])
-        .arg(&segment_list)
-        .args(["-progress", "pipe:1", "-nostats"])
-        .arg(&output_pattern)
+        .arg(&media_wav)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -829,7 +851,7 @@ fn normalize_audio(
                     let progress = if duration_seconds > 0.0 {
                         ((microseconds / 1_000_000.0 / duration_seconds) * 100.0)
                             .round()
-                            .clamp(0.0, 99.0) as u8
+                            .clamp(0.0, 95.0) as u8
                     } else {
                         0
                     };
@@ -873,6 +895,46 @@ fn normalize_audio(
         ));
     }
 
+    if !media_wav.is_file() || fs::metadata(&media_wav).map(|m| m.len()).unwrap_or(0) == 0 {
+        return Err("音频处理失败：未生成有效音频文件".to_string());
+    }
+
+    let output_pattern = chunks_dir_clean.join("chunk-%03d.wav");
+    let segment_list = chunks_dir_clean.join("chunks.csv");
+    let slice_res = media_command(&tools.ffmpeg)
+        .args(["-hide_banner", "-nostdin", "-y", "-i"])
+        .arg(&media_wav)
+        .args([
+            "-c",
+            "copy",
+            "-f",
+            "segment",
+            "-segment_time",
+            "120",
+            "-reset_timestamps",
+            "1",
+            "-segment_format",
+            "wav",
+            "-segment_list_type",
+            "csv",
+            "-segment_list",
+        ])
+        .arg(&segment_list)
+        .arg(&output_pattern)
+        .stdin(Stdio::null())
+        .output();
+
+    if slice_res.is_err() || !slice_res.as_ref().unwrap().status.success() {
+        let single_chunk = AudioChunk {
+            index: 0,
+            path: media_wav.to_string_lossy().into_owned(),
+            start_seconds: 0.0,
+            end_seconds: duration_seconds,
+        };
+        emit_progress(app, job_id, "normalize", 100, "音频准备完成");
+        return Ok(vec![single_chunk]);
+    }
+
     let mut paths = fs::read_dir(chunks_dir)
         .map_err(|error| format!("无法读取音频切片：{error}"))?
         .filter_map(Result::ok)
@@ -884,7 +946,14 @@ fn normalize_audio(
         .collect::<Vec<_>>();
     paths.sort();
     if paths.is_empty() {
-        return Err("音频处理失败：未检测到有效声音".to_string());
+        let single_chunk = AudioChunk {
+            index: 0,
+            path: media_wav.to_string_lossy().into_owned(),
+            start_seconds: 0.0,
+            end_seconds: duration_seconds,
+        };
+        emit_progress(app, job_id, "normalize", 100, "音频准备完成");
+        return Ok(vec![single_chunk]);
     }
     let chunks = paths
         .into_iter()
@@ -925,10 +994,11 @@ pub fn prepare_media(
         None
     };
     if let Some(cached) = cached.as_ref() {
-        let chunks_ready = cached
-            .chunks
-            .iter()
-            .all(|chunk| Path::new(&chunk.path).is_file());
+        let chunks_ready = !cached.chunks.is_empty()
+            && cached
+                .chunks
+                .iter()
+                .all(|chunk| Path::new(&chunk.path).is_file());
         let video_ready = cached
             .video_file
             .as_deref()
@@ -964,6 +1034,7 @@ pub fn prepare_media(
             tools,
             job_id,
             &video_file,
+            &task_dir,
             &chunks_dir,
             duration_seconds,
             &cancelled,

@@ -316,33 +316,103 @@ pub fn delete_default_model(app: &AppHandle) -> Result<(), String> {
 
 pub fn load_transcript(task_data_dir: &Path, job_id: &str) -> Result<TranscriptResult, String> {
     media::validate_job_id(job_id)?;
-    let path = task_data_dir
-        .join("tasks")
-        .join(job_id)
-        .join("transcript")
-        .join("transcript.json");
-    if !path.is_file() {
-        return Ok(TranscriptResult {
-            job_id: job_id.to_string(),
-            model_id: DEFAULT_MODEL_ID.to_string(),
-            language: "zh".to_string(),
-            translation_language: None,
-            text: String::new(),
-            segments: Vec::new(),
-            pause_repairs: None,
-        });
+    let task_dir = task_data_dir.join("tasks").join(job_id);
+    let path = task_dir.join("transcript").join("transcript.json");
+    if path.is_file() {
+        let mut file = File::open(&path)
+            .map_err(|error| format!("无法读取转录结果（{}）：{error}", path.display()))?;
+        let mut content = String::new();
+        file.read_to_string(&mut content)
+            .map_err(|error| format!("无法解析转录内容：{error}"))?;
+        let mut transcript: TranscriptResult =
+            serde_json::from_str(&content).map_err(|error| format!("转录格式无效：{error}"))?;
+        if transcript.job_id.is_empty() {
+            transcript.job_id = job_id.to_string();
+        }
+        return Ok(transcript);
     }
-    let mut file = File::open(&path)
-        .map_err(|error| format!("无法读取转录结果（{}）：{error}", path.display()))?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .map_err(|error| format!("无法解析转录内容：{error}"))?;
-    let mut transcript: TranscriptResult =
-        serde_json::from_str(&content).map_err(|error| format!("转录格式无效：{error}"))?;
-    if transcript.job_id.is_empty() {
-        transcript.job_id = job_id.to_string();
+
+    let checkpoint_path = task_dir.join("moss_checkpoint.json");
+    if checkpoint_path.is_file() {
+        if let Ok(content) = fs::read_to_string(&checkpoint_path) {
+            if let Ok(data) = serde_json::from_str::<crate::transcriber::MossCheckpointData>(&content) {
+                let raw_segments = match data {
+                    crate::transcriber::MossCheckpointData::Structured { segments, .. } => segments,
+                    crate::transcriber::MossCheckpointData::Legacy(segments) => segments,
+                };
+                let segments = raw_segments
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, s)| TranscriptSegment {
+                        id: s.id,
+                        chunk_index: idx,
+                        start: s.start,
+                        end: s.end,
+                        start_ms: (s.start * 1000.0).round() as u64,
+                        end_ms: (s.end * 1000.0).round() as u64,
+                        text: s.text,
+                        translated_text: None,
+                        avg_confidence: None,
+                    })
+                    .collect::<Vec<_>>();
+                let text = segments.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join("\n");
+                return Ok(TranscriptResult {
+                    job_id: job_id.to_string(),
+                    model_id: "openasr-moss-q4".to_string(),
+                    language: "zh".to_string(),
+                    translation_language: None,
+                    text,
+                    segments,
+                    pause_repairs: None,
+                });
+            }
+        }
     }
-    Ok(transcript)
+
+    let raw_path = task_dir.join("transcript").join("raw_transcript.json");
+    if raw_path.is_file() {
+        if let Ok(content) = fs::read_to_string(&raw_path) {
+            if let Ok(raw) = serde_json::from_str::<crate::transcript::model::RawTranscript>(&content) {
+                let segments = raw
+                    .segments
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, s)| TranscriptSegment {
+                        id: if s.id.is_empty() { format!("raw-{idx}") } else { s.id },
+                        chunk_index: idx,
+                        start: s.start_ms as f64 / 1000.0,
+                        end: s.end_ms as f64 / 1000.0,
+                        start_ms: s.start_ms,
+                        end_ms: s.end_ms,
+                        text: s.text,
+                        translated_text: None,
+                        avg_confidence: None,
+                    })
+                    .collect::<Vec<_>>();
+                let text = segments.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join("\n");
+                let lang = raw.language.unwrap_or_else(|| "zh".to_string());
+                return Ok(TranscriptResult {
+                    job_id: job_id.to_string(),
+                    model_id: raw.metadata.asr_backend,
+                    language: lang,
+                    translation_language: None,
+                    text,
+                    segments,
+                    pause_repairs: None,
+                });
+            }
+        }
+    }
+
+    Ok(TranscriptResult {
+        job_id: job_id.to_string(),
+        model_id: DEFAULT_MODEL_ID.to_string(),
+        language: "zh".to_string(),
+        translation_language: None,
+        text: String::new(),
+        segments: Vec::new(),
+        pause_repairs: None,
+    })
 }
 
 pub fn save_transcript(
@@ -371,56 +441,60 @@ pub async fn transcribe_job(
     job_id: &str,
     backend: &str,
     asr_config_json: Option<&str>,
+    resume: bool,
     cancelled: Arc<AtomicBool>,
 ) -> Result<TranscriptResult, String> {
     media::validate_job_id(job_id)?;
 
     let is_moss = backend == crate::openasr::MODEL_ID || backend == "openasr-moss-q4";
     let expected_model_id = if is_moss { crate::openasr::MODEL_ID } else { DEFAULT_MODEL_ID };
+    let native_status_opt = native_manager::status(app, &NativeModelRequest { model_kind: "nano".to_string() }).ok();
     let native_status = if is_moss {
         None
     } else {
-        let status = native_manager::status(app, &NativeModelRequest { model_kind: "nano".to_string() })?;
+        let status = native_status_opt.as_ref().ok_or_else(|| {
+            format!("MODEL_NOT_INSTALLED:请先到“模型”页面下载 {MODEL_NAME}")
+        })?;
         if !status.ready {
             return Err(format!(
                 "MODEL_NOT_INSTALLED:请先到“模型”页面下载 {MODEL_NAME}（缺少{}）",
                 status.missing.join("、")
             ));
         }
-        Some(status)
+        Some(status.clone())
     };
     if is_moss {
         let _ = crate::openasr::model_is_ready(app)?;
     }
+    let fallback_paths = native_status_opt.map(|s| s.paths);
     let task_dir = task_data_dir.join("tasks").join(job_id);
     let transcript_dir = task_dir.join("transcript");
-    let result_path = transcript_dir.join("transcript.json");
-    if result_path.is_file() {
-        let pipeline_current = crate::transcript::storage::pipeline_is_current(&transcript_dir)
-            .unwrap_or(false)
-            && transcript_dir.join("raw_transcript.json").is_file()
-            && transcript_dir.join("canonical_transcript.json").is_file()
-            && transcript_dir.join("transform_log.json").is_file()
-            && transcript_dir.join("verification_log.json").is_file()
-            && transcript_dir.join("log.txt").is_file();
-        if pipeline_current {
-            if let Ok(cached) = load_transcript(task_data_dir, job_id) {
-                if cached.model_id == expected_model_id {
-                    emit_asr_phase(app, job_id, "standardization", "completed", "已复用当前版本本地转录结果");
-                    return Ok(cached);
-                }
-            }
-        } else {
-            emit_asr_phase(app, job_id, "recognition", "started", "检测到旧版转录管道，正在重建 Raw/Canonical 数据……");
-        }
-    }
+    let checkpoint_path = task_dir.join("moss_checkpoint.json");
 
-    // Once a new backend run is actually starting, remove the previous transcript
-    // workspace. This prevents a failed retry from being mistaken for a completed
-    // result by startup reconciliation.
-    if transcript_dir.is_dir() {
-        fs::remove_dir_all(&transcript_dir)
-            .map_err(|error| format!("无法替换旧的转录结果：{error}"))?;
+    let initial_segments = if resume && is_moss && checkpoint_path.is_file() {
+        fs::read_to_string(&checkpoint_path)
+            .ok()
+            .and_then(|raw| {
+                serde_json::from_str::<crate::transcriber::MossCheckpointData>(&raw).ok().map(|data| match data {
+                    crate::transcriber::MossCheckpointData::Structured { segments, .. } => segments,
+                    crate::transcriber::MossCheckpointData::Legacy(segments) => segments,
+                })
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let _result_path = transcript_dir.join("transcript.json");
+
+    if initial_segments.is_empty() {
+        if checkpoint_path.is_file() {
+            let _ = fs::remove_file(&checkpoint_path);
+        }
+        if transcript_dir.is_dir() {
+            fs::remove_dir_all(&transcript_dir)
+                .map_err(|error| format!("无法替换旧的转录结果：{error}"))?;
+        }
     }
     fs::create_dir_all(&transcript_dir)
         .map_err(|e| format!("无法创建转录目录：{e}"))?;
@@ -470,8 +544,16 @@ pub async fn transcribe_job(
         funasr_model_path: native_status.as_ref().map(|s| s.paths.model_path.clone()).unwrap_or_default(),
         funasr_encoder_model_path: native_status.as_ref().map(|s| s.paths.encoder_model_path.clone()).unwrap_or_default(),
         funasr_vad_model_path: native_status.as_ref().map(|s| s.paths.vad_model_path.clone()).unwrap_or_default(),
-        punctuation_runtime_path: native_status.as_ref().map(|s| s.paths.punctuation_runtime_path.clone()).unwrap_or_default(),
-        punctuation_model_path: native_status.as_ref().map(|s| s.paths.punctuation_model_path.clone()).unwrap_or_default(),
+        punctuation_runtime_path: native_status
+            .as_ref()
+            .map(|s| s.paths.punctuation_runtime_path.clone())
+            .or_else(|| fallback_paths.as_ref().map(|p| p.punctuation_runtime_path.clone()))
+            .unwrap_or_default(),
+        punctuation_model_path: native_status
+            .as_ref()
+            .map(|s| s.paths.punctuation_model_path.clone())
+            .or_else(|| fallback_paths.as_ref().map(|p| p.punctuation_model_path.clone()))
+            .unwrap_or_default(),
         alignment_model_path: native_status.as_ref().map(|s| s.paths.alignment_model_path.clone()).unwrap_or_default(),
         alignment_tokens_path: native_status.as_ref().map(|s| s.paths.alignment_tokens_path.clone()).unwrap_or_default(),
         openasr_runtime_path: if is_moss { crate::openasr::model_is_ready(app)?.0.to_string_lossy().into_owned() } else { String::new() },
@@ -497,6 +579,8 @@ pub async fn transcribe_job(
         video_path: audio_path.to_string_lossy().into_owned(),
         media_duration: Some(media.duration_seconds),
         config,
+        initial_segments,
+        checkpoint_file: is_moss.then(|| checkpoint_path.to_string_lossy().into_owned()),
     };
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TranscriptionEvent>();
@@ -886,6 +970,7 @@ pub async fn transcribe_job(
 
     let pipeline_config = crate::transcript::pipeline::PipelineConfig {
         is_english_audio: is_english,
+        preserve_lexical_fidelity: is_moss,
         boundary_evidence,
         punctuation_repairs,
         verification_rewrites,

@@ -84,6 +84,8 @@ pub struct CrossBoundaryRewriteEvidence {
 pub struct PipelineConfig {
     /// Backward-compatible fallback only. `RawTranscript.language` is preferred when present.
     pub is_english_audio: bool,
+    /// When true, preserves lexical surface fidelity (e.g. for MOSS), skipping aggressive ITN number mutators and lexical rewrites.
+    pub preserve_lexical_fidelity: bool,
     /// Typed acoustic/alignment evidence. Acoustic pauses never directly split Canonical.
     pub boundary_evidence: Vec<BoundaryEvidence>,
     /// Optional high-confidence CTC punctuation relocations.
@@ -100,6 +102,7 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             is_english_audio: false,
+            preserve_lexical_fidelity: false,
             boundary_evidence: Vec::new(),
             punctuation_repairs: Vec::new(),
             verification_rewrites: Vec::new(),
@@ -130,20 +133,34 @@ pub fn run_canonical_pipeline(raw: &RawTranscript, config: &PipelineConfig) -> (
 
     let guarded = integrity::run_integrity_guard(raw, profile, &mut log);
     let punctuated = punctuation_repair::apply_punctuation_repairs(guarded, profile, &config.punctuation_repairs, &mut log);
-    let verified = verification::apply_verification_rewrites(punctuated, &config.verification_rewrites, &mut log);
-    let stitched = stitch::apply_cross_boundary_rewrites(verified, &config.bridge_rewrites, &mut log);
-    let surface_repaired = surface_repair::apply_surface_repairs(
-        stitched,
-        profile,
-        &config.boundary_evidence,
-        &config.surface_repairs,
-        &mut log,
-    );
+    let verified = if config.preserve_lexical_fidelity {
+        punctuated
+    } else {
+        verification::apply_verification_rewrites(punctuated, &config.verification_rewrites, &mut log)
+    };
+    let stitched = if config.preserve_lexical_fidelity {
+        verified
+    } else {
+        stitch::apply_cross_boundary_rewrites(verified, &config.bridge_rewrites, &mut log)
+    };
+    let surface_repaired = if config.preserve_lexical_fidelity {
+        stitched
+    } else {
+        surface_repair::apply_surface_repairs(
+            stitched,
+            profile,
+            &config.boundary_evidence,
+            &config.surface_repairs,
+            &mut log,
+        )
+    };
     let aligned_evidence = alignment::derive_sentence_boundary_evidence(&surface_repaired, profile, &config.boundary_evidence);
     let mut segments = boundary::resolve_boundaries(surface_repaired, profile, &aligned_evidence, &mut log);
     dedupe::run_conservative_dedupe(&mut segments, profile, &mut log);
-    itn::run_itn_engine(&mut segments, profile, &mut log);
-    entity::run_entity_resolver(&mut segments, profile, &mut log);
+    if !config.preserve_lexical_fidelity {
+        itn::run_itn_engine(&mut segments, profile, &mut log);
+        entity::run_entity_resolver(&mut segments, profile, &mut log);
+    }
     semantic_boundary::run_final_semantic_boundary_review(&mut segments, profile, &mut log);
     typography::run_typography_normalizer(&mut segments, profile, &mut log);
 

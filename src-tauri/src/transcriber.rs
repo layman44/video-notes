@@ -1,4 +1,4 @@
-use crate::{chunk_stitcher, pause_alignment};
+use crate::{chunk_stitcher, pause_alignment, punctuation_ffi};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -25,7 +25,6 @@ fn format_seconds_mmss(sec: f64) -> String {
     let seconds = total_sec % 60;
     format!("{minutes:02}:{seconds:02}")
 }
-
 pub(crate) fn hidden_command(program: impl AsRef<Path>) -> Command {
     #[cfg(windows)]
     {
@@ -84,6 +83,23 @@ pub struct StartTranscriptionRequest {
     pub video_path: String,
     pub media_duration: Option<f64>,
     pub config: AsrConfig,
+    #[serde(default)]
+    pub initial_segments: Vec<TranscriptSegment>,
+    #[serde(default)]
+    pub checkpoint_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MossCheckpointData {
+    Structured {
+        #[serde(rename = "nextStartSeconds")]
+        next_start_seconds: f64,
+        #[serde(rename = "nextChunkIndex")]
+        next_chunk_index: usize,
+        segments: Vec<TranscriptSegment>,
+    },
+    Legacy(Vec<TranscriptSegment>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1981,35 +1997,87 @@ async fn run_openasr_moss(
     })?;
 
     let total_ms = (duration * 1000.0).round() as u64;
+    let (mut segments, mut start, mut chunk_index) = if let Some(checkpoint_path) = &request.checkpoint_file {
+        if let Ok(raw) = tokio::fs::read_to_string(checkpoint_path).await {
+            if let Ok(data) = serde_json::from_str::<MossCheckpointData>(&raw) {
+                match data {
+                    MossCheckpointData::Structured { next_start_seconds, next_chunk_index, segments } => {
+                        let resume_start = next_start_seconds.min(duration);
+                        send(&on_event, TranscriptionEvent::Log {
+                            message: format!("检测到已有断点记录，正在从 {}（第 {} 个切片）接着继续转写……", format_seconds_mmss(resume_start), next_chunk_index + 1),
+                        })?;
+                        (segments, resume_start, next_chunk_index)
+                    }
+                    MossCheckpointData::Legacy(segments) => {
+                        let last_time = segments.last().map(|s| s.end).unwrap_or(0.0);
+                        let resume_start = ((last_time - overlap_seconds).max(0.0) / step_seconds).floor() * step_seconds;
+                        let resume_index = (resume_start / step_seconds).round() as usize;
+                        send(&on_event, TranscriptionEvent::Log {
+                            message: format!("检测到已有断点记录，正在从 {} 接着继续转写……", format_seconds_mmss(resume_start)),
+                        })?;
+                        (segments, resume_start, resume_index)
+                    }
+                }
+            } else {
+                (request.initial_segments.clone(), 0.0f64, 0usize)
+            }
+        } else {
+            (request.initial_segments.clone(), 0.0f64, 0usize)
+        }
+    } else {
+        (request.initial_segments.clone(), 0.0f64, 0usize)
+    };
+
     send(&on_event, TranscriptionEvent::PhaseProgress {
         phase: "recognition".into(),
-        completed: 0,
+        completed: (start * 1000.0).round() as u64,
         total: Some(total_ms),
         unit: "milliseconds".into(),
-        message: "MOSS 模型已就绪，正在逐段转写……".into(),
+        message: if start > 0.0 {
+            format!("MOSS 正在从 {} 继续转写……", format_seconds_mmss(start))
+        } else {
+            "MOSS 模型已就绪，正在逐段转写……".into()
+        },
     })?;
 
-    let mut segments: Vec<TranscriptSegment> = Vec::new();
-    let mut chunk_index = 0usize;
-    let mut start = 0.0f64;
     while start < duration {
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill().await;
             let _ = child.wait().await;
             let _ = stderr_task.await;
+            save_moss_checkpoint(request.checkpoint_file.as_deref(), &segments, start, chunk_index).await;
             send(&on_event, TranscriptionEvent::Cancelled {})?;
             return Ok(());
         }
         let actual_duration = (duration - start).min(chunk_seconds);
         let wav_path = temp.path().join(format!("moss-{chunk_index:04}.wav"));
-        extract_chunk(
-            &request.config.ffmpeg_path,
-            &request.video_path,
-            start,
-            actual_duration,
-            &wav_path,
-        )
-        .await?;
+
+        // 1. FFmpeg 音频切片提取（支持即时抢占中断）
+        tokio::select! {
+            biased;
+            _ = async {
+                while !cancel.load(Ordering::Relaxed) {
+                    sleep(Duration::from_millis(50)).await;
+                }
+            } => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                let _ = stderr_task.await;
+                save_moss_checkpoint(request.checkpoint_file.as_deref(), &segments, start, chunk_index).await;
+                send(&on_event, TranscriptionEvent::Cancelled {})?;
+                return Ok(());
+            }
+            extract_res = extract_chunk(
+                &request.config.ffmpeg_path,
+                &request.video_path,
+                start,
+                actual_duration,
+                &wav_path,
+            ) => {
+                extract_res?;
+            }
+        }
+
         let mut attempts = 0usize;
         let (status, body) = loop {
             attempts += 1;
@@ -2024,22 +2092,60 @@ async fn run_openasr_moss(
                 .part("file", part)
                 .text("model", "moss-transcribe-diarize")
                 .text("response_format", "verbose_json");
-            let response = client
-                .post(format!("http://{address}/v1/audio/transcriptions"))
-                .multipart(form)
-                .send()
-                .await
-                .map_err(|error| format!("MOSS 分片 {} 请求失败：{error}", chunk_index + 1))?;
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                .map_err(|error| format!("读取 MOSS 分片 {} 响应失败：{error}", chunk_index + 1))?;
+
+            // 2. OpenASR HTTP 推理请求（支持即时抢占中断）
+            let (status, body) = tokio::select! {
+                biased;
+                _ = async {
+                    while !cancel.load(Ordering::Relaxed) {
+                        sleep(Duration::from_millis(50)).await;
+                    }
+                } => {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    let _ = stderr_task.await;
+                    save_moss_checkpoint(request.checkpoint_file.as_deref(), &segments, start, chunk_index).await;
+                    send(&on_event, TranscriptionEvent::Cancelled {})?;
+                    return Ok(());
+                }
+                send_res = async {
+                    let response = client
+                        .post(format!("http://{address}/v1/audio/transcriptions"))
+                        .multipart(form)
+                        .send()
+                        .await
+                        .map_err(|error| format!("MOSS 分片 {} 请求失败：{error}", chunk_index + 1))?;
+                    let status = response.status();
+                    let body = response
+                        .text()
+                        .await
+                        .map_err(|error| format!("读取 MOSS 分片 {} 响应失败：{error}", chunk_index + 1))?;
+                    Ok::<_, String>((status, body))
+                } => {
+                    send_res?
+                }
+            };
+
             if status.as_u16() == 429 && attempts < 20 {
                 send(&on_event, TranscriptionEvent::Log {
                     message: format!("OpenASR MOSS 会话忙碌（429），正在等待释放重试（第 {}/20 次）……", attempts),
                 })?;
-                sleep(Duration::from_millis(1500)).await;
+                tokio::select! {
+                    biased;
+                    _ = async {
+                        while !cancel.load(Ordering::Relaxed) {
+                            sleep(Duration::from_millis(50)).await;
+                        }
+                    } => {
+                        let _ = child.kill().await;
+                        let _ = child.wait().await;
+                        let _ = stderr_task.await;
+                        save_moss_checkpoint(request.checkpoint_file.as_deref(), &segments, start, chunk_index).await;
+                        send(&on_event, TranscriptionEvent::Cancelled {})?;
+                        return Ok(());
+                    }
+                    _ = sleep(Duration::from_millis(1500)) => {}
+                }
                 continue;
             }
             break (status, body);
@@ -2048,34 +2154,12 @@ async fn run_openasr_moss(
             return Err(format!("MOSS 分片 {} 识别失败（{}）：{}", chunk_index + 1, status, tail_text(&body, 2000)));
         }
         let local_segments = parse_openasr_segments(&body, chunk_index, actual_duration);
-        let ownership_start = if chunk_index == 0 {
-            0.0
-        } else {
-            start + overlap_seconds / 2.0
-        };
-        for mut segment in local_segments {
-            segment.start += start;
-            segment.end += start;
-            if segment.start > duration + 0.25 || segment.end <= ownership_start {
-                continue;
-            }
-            if segment.start < ownership_start {
-                segment.start = ownership_start;
-            }
-            let duplicate = segments.iter().any(|previous| {
-                normalize_overlap_text(&previous.text) == normalize_overlap_text(&segment.text)
-                    && (previous.start - segment.start).abs() <= overlap_seconds + 1.0
-            });
-            if !duplicate {
-                segments.push(segment);
-            }
-        }
-        segments.sort_by(|left, right| {
-            left.start
-                .partial_cmp(&right.start)
-                .unwrap_or(CmpOrdering::Equal)
-                .then_with(|| left.end.partial_cmp(&right.end).unwrap_or(CmpOrdering::Equal))
-        });
+        stitch_openasr_chunk(&mut segments, local_segments, start);
+
+        let next_start = start + step_seconds;
+        let next_chunk_index = chunk_index + 1;
+        save_moss_checkpoint(request.checkpoint_file.as_deref(), &segments, next_start, next_chunk_index).await;
+
         let processed_until = (start + actual_duration).min(duration);
         let all_text = segments.iter().map(|segment| segment.text.as_str()).collect::<Vec<_>>().join(" ");
         send(&on_event, TranscriptionEvent::PhaseProgress {
@@ -2100,14 +2184,53 @@ async fn run_openasr_moss(
     if segments.is_empty() {
         return Err(format!("MOSS 未产生有效文本\n{}", tail_text(&stderr_text, 3000)));
     }
+
+    if let Some(checkpoint_path) = &request.checkpoint_file {
+        let _ = tokio::fs::remove_file(checkpoint_path).await;
+    }
+
     let all_text = segments.iter().map(|segment| segment.text.as_str()).collect::<Vec<_>>().join(" ");
     send(&on_event, TranscriptionEvent::PhaseCompleted {
         phase: "recognition".into(),
         message: format!("MOSS 原始语音识别完成 · {} 段", segments.len()),
     })?;
+
+    // 神经网络标点恢复（针对 MOSS 文本打上精确的逗号与句号）
+    let punc_dll = Path::new(&request.config.punctuation_runtime_path);
+    let punc_model = Path::new(&request.config.punctuation_model_path);
+    if punc_dll.is_file() && punc_model.is_file() && is_chinese_text(&all_text) && !segments.is_empty() {
+        send(&on_event, TranscriptionEvent::PhaseStarted {
+            phase: "punctuation".into(),
+            message: "正在使用 CT-Punc 神经标点模型恢复标点……".into(),
+        })?;
+        // 预处理：先剥离已有零星标点，让 CT-Punc 在纯净文本上进行全文上下文最优断句，避免重叠
+        let texts: Vec<String> = segments.iter().map(|s| strip_punctuation_for_model(&s.text)).collect();
+        let dll_path = punc_dll.to_path_buf();
+        let model_path = punc_model.to_path_buf();
+        let punctuated = tokio::task::spawn_blocking(move || {
+            punctuation_ffi::punctuate_batch(&dll_path, &model_path, &texts)
+        })
+        .await
+        .map_err(|e| format!("等待标点模型执行失败：{e}"))??;
+
+        if punctuated.len() == segments.len() {
+            for (seg, punct) in segments.iter_mut().zip(punctuated) {
+                let trimmed = punct.trim();
+                if !trimmed.is_empty() {
+                    seg.text = collapse_consecutive_punctuation(trimmed);
+                }
+            }
+        }
+        send(&on_event, TranscriptionEvent::PhaseCompleted {
+            phase: "punctuation".into(),
+            message: "CT-Punc 标点恢复完成".into(),
+        })?;
+    }
+
+    let final_all_text = segments.iter().map(|segment| segment.text.as_str()).collect::<Vec<_>>().join(" ");
     send(&on_event, TranscriptionEvent::Finished {
         segments,
-        language: Some(dominant_language(&all_text).to_string()),
+        language: Some(dominant_language(&final_all_text).to_string()),
         pause_repairs: Vec::new(),
         bridge_repairs: Vec::new(),
         verification_results: Vec::new(),
@@ -2115,11 +2238,188 @@ async fn run_openasr_moss(
     Ok(())
 }
 
-fn normalize_overlap_text(text: &str) -> String {
+async fn save_moss_checkpoint(
+    checkpoint_file: Option<&str>,
+    segments: &[TranscriptSegment],
+    next_start: f64,
+    next_chunk_index: usize,
+) {
+    if let Some(checkpoint_path) = checkpoint_file {
+        let payload = MossCheckpointData::Structured {
+            next_start_seconds: next_start,
+            next_chunk_index,
+            segments: segments.to_vec(),
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&payload) {
+            let _ = tokio::fs::write(checkpoint_path, json).await;
+        }
+    }
+}
+
+pub fn strip_punctuation_for_model(text: &str) -> String {
     text.chars()
-        .filter(|character| !character.is_whitespace() && !"，。！？,.!?、".contains(*character))
-        .flat_map(char::to_lowercase)
+        .filter(|c| !matches!(*c, '，' | '。' | '？' | '！' | '、' | '；' | '：' | '“' | '”' | '‘' | '’' | '《' | '》' | '…' | '—' | ',' | '?' | '!' | ';'))
         .collect()
+}
+
+pub fn collapse_consecutive_punctuation(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if matches!(c, '。' | '？' | '！' | '，' | '、' | '；') {
+            let mut strongest = c;
+            while let Some(&next) = chars.peek() {
+                if matches!(next, '。' | '？' | '！' | '，' | '、' | '；') {
+                    let p_curr = match strongest {
+                        '？' => 4,
+                        '！' => 4,
+                        '。' => 3,
+                        '；' => 2,
+                        '，' => 1,
+                        _ => 0,
+                    };
+                    let p_next = match next {
+                        '？' => 4,
+                        '！' => 4,
+                        '。' => 3,
+                        '；' => 2,
+                        '，' => 1,
+                        _ => 0,
+                    };
+                    if p_next > p_curr {
+                        strongest = next;
+                    }
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            result.push(strongest);
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+fn stitch_openasr_chunk(
+    accumulated: &mut Vec<TranscriptSegment>,
+    incoming: Vec<TranscriptSegment>,
+    chunk_start: f64,
+) {
+    if incoming.is_empty() {
+        return;
+    }
+
+    if accumulated.is_empty() {
+        for mut seg in incoming {
+            seg.start += chunk_start;
+            seg.end += chunk_start;
+            accumulated.push(seg);
+        }
+        return;
+    }
+
+    let overlap_start = (chunk_start - 1.0).max(0.0);
+    for mut seg in incoming {
+        seg.start += chunk_start;
+        seg.end += chunk_start;
+        if seg.text.trim().is_empty() {
+            continue;
+        }
+
+        let last_end = accumulated.last().map(|s| s.end).unwrap_or(0.0);
+        if seg.end <= overlap_start {
+            continue;
+        }
+
+        // 获取已有转录末尾几个片段的纯净文本用于比对
+        let recent_tail: String = accumulated
+            .iter()
+            .rev()
+            .take(6)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|s| s.text.trim())
+            .collect::<Vec<_>>()
+            .join("");
+        let clean_tail: String = recent_tail
+            .chars()
+            .filter(|c| !c.is_whitespace() && !"，。！？,.!?、".contains(*c))
+            .collect();
+        let clean_head: String = seg
+            .text
+            .chars()
+            .filter(|c| !c.is_whitespace() && !"，。！？,.!?、".contains(*c))
+            .collect();
+
+        if clean_head.is_empty() {
+            continue;
+        }
+
+        // 1. 如果新片段的文字已经完全包含在已有尾部，且时间在重叠区，直接丢弃
+        if clean_tail.contains(&clean_head) && seg.start <= last_end + 1.2 {
+            continue;
+        }
+
+        // 2. 查找已转录尾部与新分片头部的最大重叠后缀/前缀（最大匹配重合词）
+        let max_k = clean_head.chars().count().min(clean_tail.chars().count());
+        let tail_chars: Vec<char> = clean_tail.chars().collect();
+        let head_chars: Vec<char> = clean_head.chars().collect();
+
+        let mut matched_len = 0usize;
+        for k in (2..=max_k).rev() {
+            if tail_chars[tail_chars.len() - k..] == head_chars[..k] {
+                matched_len = k;
+                break;
+            }
+        }
+
+        if matched_len > 0 {
+            if matched_len >= head_chars.len() {
+                continue;
+            }
+
+            let raw_chars: Vec<char> = seg.text.chars().collect();
+            let mut non_punct_seen = 0usize;
+            let mut trim_idx = 0usize;
+            for (idx, ch) in raw_chars.iter().enumerate() {
+                if !ch.is_whitespace() && !"，。！？,.!?、".contains(*ch) {
+                    non_punct_seen += 1;
+                    if non_punct_seen == matched_len {
+                        trim_idx = idx + 1;
+                        break;
+                    }
+                }
+            }
+
+            let trimmed_text: String = raw_chars[trim_idx..].iter().collect();
+            let trimmed_text = trimmed_text
+                .trim_start_matches(|c: char| c.is_whitespace() || "，。！？,.!?、".contains(c))
+                .trim()
+                .to_string();
+            if trimmed_text.is_empty() {
+                continue;
+            }
+
+            let old_start = seg.start;
+            let old_end = seg.end;
+            let fraction = (matched_len as f64 / head_chars.len().max(1) as f64).clamp(0.0, 0.9);
+            seg.start = (old_start + (old_end - old_start) * fraction).max(last_end.min(old_end - 0.05));
+            seg.text = trimmed_text;
+        }
+
+        if let Some(last) = accumulated.last_mut() {
+            if seg.start < last.start {
+                seg.start = last.start + 0.05;
+            }
+            if seg.end <= seg.start {
+                seg.end = seg.start + 0.10;
+            }
+        }
+        accumulated.push(seg);
+    }
 }
 
 fn parse_openasr_segments(body: &str, chunk_index: usize, chunk_duration: f64) -> Vec<TranscriptSegment> {
@@ -2317,5 +2617,89 @@ mod transcriber_tests {
         assert_eq!(seg3.text, "Final sentence.");
         assert_eq!(seg3.start, 8.5);
         assert_eq!(seg3.end, 10.0);
+    }
+
+    #[test]
+    fn stitches_openasr_overlapping_boundary_and_deduplicates() {
+        use super::{stitch_openasr_chunk, TranscriptSegment};
+
+        let mut accumulated = vec![
+            TranscriptSegment {
+                id: "openasr-moss-0-9".into(),
+                start: 26.67,
+                end: 28.35,
+                text: "并且水兵哗变之后呢".into(),
+            },
+            TranscriptSegment {
+                id: "openasr-moss-0-10".into(),
+                start: 28.37,
+                end: 29.89,
+                text: "伊朗政治情况高度".into(),
+            },
+        ];
+
+        let incoming = vec![
+            TranscriptSegment {
+                id: "openasr-moss-1-0".into(),
+                start: 0.0,
+                end: 0.81,
+                text: "情况高度转好".into(),
+            },
+            TranscriptSegment {
+                id: "openasr-moss-1-1".into(),
+                start: 0.83,
+                end: 2.89,
+                text: "并且伊朗对美口径进一步升级".into(),
+            },
+        ];
+
+        stitch_openasr_chunk(&mut accumulated, incoming, 29.50);
+
+        assert_eq!(accumulated.len(), 4);
+        assert_eq!(accumulated[1].text, "伊朗政治情况高度");
+        assert_eq!(accumulated[2].text, "转好");
+        assert_eq!(accumulated[3].text, "并且伊朗对美口径进一步升级");
+    }
+
+    #[test]
+    fn drops_fully_duplicated_openasr_chunk_fragment() {
+        use super::{stitch_openasr_chunk, TranscriptSegment};
+
+        let mut accumulated = vec![
+            TranscriptSegment {
+                id: "openasr-moss-1-13".into(),
+                start: 58.07,
+                end: 58.98,
+                text: "特朗普正式宣布".into(),
+            },
+        ];
+
+        let incoming = vec![
+            TranscriptSegment {
+                id: "openasr-moss-2-0".into(),
+                start: 0.0,
+                end: 2.41,
+                text: "特朗普正式宣布大幅减少美国韩国军演规模".into(),
+            },
+        ];
+
+        stitch_openasr_chunk(&mut accumulated, incoming, 58.50);
+
+        assert_eq!(accumulated.len(), 2);
+        assert_eq!(accumulated[0].text, "特朗普正式宣布");
+        assert_eq!(accumulated[1].text, "大幅减少美国韩国军演规模");
+    }
+
+    #[test]
+    fn strips_punctuation_and_collapses_consecutive_marks() {
+        use super::{collapse_consecutive_punctuation, strip_punctuation_for_model};
+
+        let raw_with_marks = "你看，中国北边蒙古、俄罗斯？这就是过去的和俄罗斯战略缓冲带。";
+        let stripped = strip_punctuation_for_model(raw_with_marks);
+        assert_eq!(stripped, "你看中国北边蒙古俄罗斯这就是过去的和俄罗斯战略缓冲带");
+
+        assert_eq!(collapse_consecutive_punctuation("这是第一句。，第二句"), "这是第一句。第二句");
+        assert_eq!(collapse_consecutive_punctuation("真的吗，？好啊！"), "真的吗？好啊！");
+        assert_eq!(collapse_consecutive_punctuation("等等，，，你说什么"), "等等，你说什么");
     }
 }

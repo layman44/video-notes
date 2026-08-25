@@ -2,6 +2,7 @@ import {
   Box,
   FileClock,
   Home,
+  Search,
   Settings,
   ShieldCheck,
   type LucideIcon,
@@ -21,6 +22,7 @@ const navItems: Array<{
   icon: LucideIcon;
 }> = [
   { id: "home", label: "首页", icon: Home },
+  { id: "search", label: "搜索", icon: Search },
   { id: "tasks", label: "任务", icon: FileClock },
   { id: "models", label: "模型", icon: Box },
   { id: "settings", label: "设置", icon: Settings },

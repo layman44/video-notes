@@ -8,10 +8,11 @@ interface HomePageProps {
   jobs: Job[];
   onOpenJob: (job: Job) => void;
   onStart: (preview: SourcePreview) => void;
+  onViewAll?: () => void;
   jobActions: JobActionHandlers;
 }
 
-export function HomePage({ jobs, onOpenJob, onStart, jobActions }: HomePageProps) {
+export function HomePage({ jobs, onOpenJob, onStart, onViewAll, jobActions }: HomePageProps) {
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
   const [isParsing, setIsParsing] = useState(false);
@@ -84,8 +85,13 @@ export function HomePage({ jobs, onOpenJob, onStart, jobActions }: HomePageProps
       <section className="recent-section">
         <div className="section-heading-row">
           <h2>最近任务</h2>
+          {onViewAll && jobs.length > 5 ? (
+            <button className="view-all-link" type="button" onClick={onViewAll}>
+              查看全部 ({jobs.length}) →
+            </button>
+          ) : null}
         </div>
-        <JobTable jobs={jobs} onOpen={onOpenJob} {...jobActions} />
+        <JobTable jobs={jobs.slice(0, 5)} onOpen={onOpenJob} {...jobActions} />
       </section>
     </section>
   );

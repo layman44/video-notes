@@ -1,15 +1,19 @@
 mod asr;
 mod chunk_stitcher;
 mod ctc_alignment_ffi;
+pub mod error;
 mod media;
 mod native_manager;
 mod openasr;
 mod pause_alignment;
 mod punctuation_ffi;
+mod search;
 mod summary;
 pub mod transcript;
 mod transcriber;
 mod translation;
+
+pub use error::AppError;
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -794,21 +798,32 @@ async fn parse_video_input(input: String, app: AppHandle) -> Result<media::Sourc
 }
 
 #[tauri::command]
+async fn search_videos(
+    keyword: String,
+    order: Option<String>,
+    duration: Option<usize>,
+    page: Option<usize>,
+    app: AppHandle,
+) -> Result<search::SearchResultResponse, String> {
+    search::search_videos(&app, keyword, order, duration, page).await
+}
+
+#[tauri::command]
 async fn prepare_media(
     job_id: String,
     source_url: String,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<media::MediaPreparationResult, String> {
+) -> Result<media::MediaPreparationResult, AppError> {
     let tools = media::resolve_media_tools(&app)?;
     let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut cancellations = state
             .cancellations
             .lock()
-            .map_err(|_| "任务控制器当前不可用".to_string())?;
+            .map_err(|_| AppError::failed("任务控制器当前不可用"))?;
         if cancellations.contains_key(&job_id) {
-            return Err("该任务已经在处理中".to_string());
+            return Err(AppError::new("ALREADY_ACTIVE", "该任务已经在处理中"));
         }
         cancellations.insert(job_id.clone(), cancelled.clone());
     }
@@ -831,29 +846,46 @@ async fn prepare_media(
     if let Ok(mut cancellations) = state.cancellations.lock() {
         cancellations.remove(&job_id);
     }
-    worker_result.map_err(|error| format!("媒体处理任务异常退出：{error}"))?
+    Ok(worker_result.map_err(|error| AppError::failed(format!("媒体处理任务异常退出：{error}")))??)
 }
 
 #[tauri::command]
 fn load_media(
     job_id: String,
     state: State<'_, AppState>,
-) -> Result<media::MediaPreparationResult, String> {
-    media::load_media(&current_task_data_directory(&state)?, &job_id)
+) -> Result<media::MediaPreparationResult, AppError> {
+    Ok(media::load_media(&current_task_data_directory(&state)?, &job_id)?)
 }
 
 #[tauri::command]
-fn cancel_media_preparation(job_id: String, state: State<'_, AppState>) -> Result<bool, String> {
-    let cancellations = state
-        .cancellations
-        .lock()
-        .map_err(|_| "任务控制器当前不可用".to_string())?;
-    if let Some(cancelled) = cancellations.get(&job_id) {
-        cancelled.store(true, Ordering::Relaxed);
-        Ok(true)
-    } else {
-        Ok(false)
+async fn cancel_media_preparation(
+    job_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, AppError> {
+    let has_task = {
+        let cancellations = state
+            .cancellations
+            .lock()
+            .map_err(|_| AppError::failed("任务控制器当前不可用"))?;
+        if let Some(cancelled) = cancellations.get(&job_id) {
+            cancelled.store(true, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
+    };
+    if has_task {
+        // 等待后台处理线程完全退出并清理注销任务锁（最多等待 5 秒）
+        for _ in 0..50 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            if let Ok(cancellations) = state.cancellations.lock() {
+                if !cancellations.contains_key(&job_id) {
+                    break;
+                }
+            }
+        }
     }
+    Ok(has_task)
 }
 
 #[tauri::command]
@@ -865,22 +897,22 @@ fn inspect_asr_model(app: AppHandle, state: State<'_, AppState>) -> asr::AsrMode
 async fn download_asr_model(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<asr::AsrModelStatus, String> {
+) -> Result<asr::AsrModelStatus, AppError> {
     if state.model_download_active.swap(true, Ordering::Relaxed) {
-        return Err("语音模型已经在下载中".to_string());
+        return Err(AppError::new("ALREADY_DOWNLOADING", "语音模型已经在下载中"));
     }
     let worker_app = app.clone();
-    let result = asr::download_default_model(&worker_app).await;
+    let result = asr::download_default_model(&worker_app).await.map_err(AppError::from);
     state.model_download_active.store(false, Ordering::Relaxed);
     result
 }
 
 #[tauri::command]
-fn delete_asr_model(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+fn delete_asr_model(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
     if state.model_download_active.load(Ordering::Relaxed) {
-        return Err("模型正在下载，暂时无法删除".to_string());
+        return Err(AppError::new("ALREADY_DOWNLOADING", "模型正在下载，暂时无法删除"));
     }
-    asr::delete_default_model(&app)
+    Ok(asr::delete_default_model(&app)?)
 }
 
 #[tauri::command]
@@ -889,21 +921,21 @@ fn inspect_moss_model(app: AppHandle) -> openasr::OpenAsrModelStatus {
 }
 
 #[tauri::command]
-async fn download_moss_model(app: AppHandle, state: State<'_, AppState>) -> Result<openasr::OpenAsrModelStatus, String> {
+async fn download_moss_model(app: AppHandle, state: State<'_, AppState>) -> Result<openasr::OpenAsrModelStatus, AppError> {
     if state.model_download_active.swap(true, Ordering::Relaxed) {
-        return Err("已有模型正在下载中".to_string());
+        return Err(AppError::new("ALREADY_DOWNLOADING", "已有模型正在下载中"));
     }
-    let result = openasr::download_model(&app).await;
+    let result = openasr::download_model(&app).await.map_err(AppError::from);
     state.model_download_active.store(false, Ordering::Relaxed);
     result
 }
 
 #[tauri::command]
-fn delete_moss_model(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+fn delete_moss_model(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
     if state.model_download_active.load(Ordering::Relaxed) {
-        return Err("模型正在下载，暂时无法删除".to_string());
+        return Err(AppError::new("ALREADY_DOWNLOADING", "模型正在下载，暂时无法删除"));
     }
-    openasr::delete_model(&app)
+    Ok(openasr::delete_model(&app)?)
 }
 
 #[tauri::command]
@@ -915,9 +947,9 @@ fn inspect_summary_model(state: State<'_, AppState>) -> summary::SummaryModelSta
 async fn download_summary_model(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<summary::SummaryModelStatus, String> {
+) -> Result<summary::SummaryModelStatus, AppError> {
     if state.model_download_active.swap(true, Ordering::Relaxed) {
-        return Err("已有模型正在下载中".to_string());
+        return Err(AppError::new("ALREADY_DOWNLOADING", "已有模型正在下载中"));
     }
     let app_data_dir = state.app_data_dir.clone();
     let worker_app = app.clone();
@@ -926,15 +958,15 @@ async fn download_summary_model(
     })
     .await;
     state.model_download_active.store(false, Ordering::Relaxed);
-    result.map_err(|error| format!("模型下载任务异常退出：{error}"))?
+    Ok(result.map_err(|error| AppError::failed(format!("模型下载任务异常退出：{error}")))??)
 }
 
 #[tauri::command]
-fn delete_summary_model(state: State<'_, AppState>) -> Result<(), String> {
+fn delete_summary_model(state: State<'_, AppState>) -> Result<(), AppError> {
     if state.model_download_active.load(Ordering::Relaxed) {
-        return Err("模型正在下载，暂时无法删除".to_string());
+        return Err(AppError::new("ALREADY_DOWNLOADING", "模型正在下载，暂时无法删除"));
     }
-    summary::delete_default_model(&state.app_data_dir)
+    Ok(summary::delete_default_model(&state.app_data_dir)?)
 }
 
 #[tauri::command]
@@ -946,9 +978,9 @@ fn inspect_translation_model(state: State<'_, AppState>) -> translation::Transla
 async fn download_translation_model(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<translation::TranslationModelStatus, String> {
+) -> Result<translation::TranslationModelStatus, AppError> {
     if state.model_download_active.swap(true, Ordering::Relaxed) {
-        return Err("已有模型正在下载中".to_string());
+        return Err(AppError::new("ALREADY_DOWNLOADING", "已有模型正在下载中"));
     }
     let app_data_dir = state.app_data_dir.clone();
     let worker_app = app.clone();
@@ -957,19 +989,19 @@ async fn download_translation_model(
     })
     .await;
     state.model_download_active.store(false, Ordering::Relaxed);
-    result.map_err(|error| format!("模型下载任务异常退出：{error}"))?
+    Ok(result.map_err(|error| AppError::failed(format!("模型下载任务异常退出：{error}")))??)
 }
 
 #[tauri::command]
-fn delete_translation_model(state: State<'_, AppState>) -> Result<(), String> {
+fn delete_translation_model(state: State<'_, AppState>) -> Result<(), AppError> {
     if state.model_download_active.load(Ordering::Relaxed) {
-        return Err("模型正在下载，暂时无法删除".to_string());
+        return Err(AppError::new("ALREADY_DOWNLOADING", "模型正在下载，暂时无法删除"));
     }
-    translation::remove_default_model(&state.app_data_dir).map(|_| ())
+    Ok(translation::remove_default_model(&state.app_data_dir).map(|_| ())?)
 }
 
 #[tauri::command]
-fn open_models_directory(state: State<'_, AppState>) -> Result<(), String> {
+fn open_models_directory(state: State<'_, AppState>) -> Result<(), AppError> {
     let directory = asr::models_dir(&state.app_data_dir);
     fs::create_dir_all(&directory).map_err(|error| format!("无法创建模型目录：{error}"))?;
     #[cfg(windows)]
@@ -990,17 +1022,18 @@ fn open_models_directory(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 async fn transcribe_media(
     job_id: String,
+    resume: Option<bool>,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<asr::TranscriptResult, String> {
+) -> Result<asr::TranscriptResult, AppError> {
     let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut cancellations = state
             .cancellations
             .lock()
-            .map_err(|_| "任务控制器当前不可用".to_string())?;
+            .map_err(|_| AppError::failed("任务控制器当前不可用"))?;
         if cancellations.contains_key(&job_id) {
-            return Err("该任务已经在处理中".to_string());
+            return Err(AppError::new("ALREADY_ACTIVE", "该任务已经在处理中"));
         }
         cancellations.insert(job_id.clone(), cancelled.clone());
     }
@@ -1014,7 +1047,7 @@ async fn transcribe_media(
         let database = state
             .database
             .lock()
-            .map_err(|_| "数据库当前不可用".to_string())?;
+            .map_err(|_| AppError::failed("数据库当前不可用"))?;
         database
             .query_row(
                 "SELECT asr_backend, asr_config_json FROM jobs WHERE id = ?1",
@@ -1033,9 +1066,11 @@ async fn transcribe_media(
         &worker_job_id,
         &asr_backend,
         asr_config_json.as_deref(),
+        resume.unwrap_or(false),
         cancelled,
     )
-    .await;
+    .await
+    .map_err(AppError::from);
     if let Ok(mut cancellations) = state.cancellations.lock() {
         cancellations.remove(&job_id);
     }
@@ -1046,8 +1081,8 @@ async fn transcribe_media(
 fn load_transcript(
     job_id: String,
     state: State<'_, AppState>,
-) -> Result<asr::TranscriptResult, String> {
-    asr::load_transcript(&current_task_data_directory(&state)?, &job_id)
+) -> Result<asr::TranscriptResult, AppError> {
+    Ok(asr::load_transcript(&current_task_data_directory(&state)?, &job_id)?)
 }
 
 fn view_segments_to_transcript_result(
@@ -1169,15 +1204,15 @@ async fn organize_notes(
     force: bool,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<summary::NoteResult, String> {
+) -> Result<summary::NoteResult, AppError> {
     let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut cancellations = state
             .cancellations
             .lock()
-            .map_err(|_| "任务控制器当前不可用".to_string())?;
+            .map_err(|_| AppError::failed("任务控制器当前不可用"))?;
         if cancellations.contains_key(&job_id) {
-            return Err("该任务已经在处理中".to_string());
+            return Err(AppError::new("ALREADY_ACTIVE", "该任务已经在处理中"));
         }
         cancellations.insert(job_id.clone(), cancelled.clone());
     }
@@ -1204,7 +1239,7 @@ async fn organize_notes(
     if let Ok(mut cancellations) = state.cancellations.lock() {
         cancellations.remove(&job_id);
     }
-    worker_result.map_err(|error| format!("内容整理任务异常退出：{error}"))?
+    Ok(worker_result.map_err(|error| AppError::failed(format!("内容整理任务异常退出：{error}")))??)
 }
 
 /// 用户主动触发的翻译任务：仅把非中文标准转录翻译为简体中文并保存，不做笔记整理。
@@ -1213,15 +1248,15 @@ async fn translate_transcript(
     job_id: String,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut cancellations = state
             .cancellations
             .lock()
-            .map_err(|_| "任务控制器当前不可用".to_string())?;
+            .map_err(|_| AppError::failed("任务控制器当前不可用"))?;
         if cancellations.contains_key(&job_id) {
-            return Err("该任务已经在处理中".to_string());
+            return Err(AppError::new("ALREADY_ACTIVE", "该任务已经在处理中"));
         }
         cancellations.insert(job_id.clone(), cancelled.clone());
     }
@@ -1243,12 +1278,12 @@ async fn translate_transcript(
     if let Ok(mut cancellations) = state.cancellations.lock() {
         cancellations.remove(&job_id);
     }
-    worker_result.map_err(|error| format!("翻译任务异常退出：{error}"))?
+    Ok(worker_result.map_err(|error| AppError::failed(format!("翻译任务异常退出：{error}")))??)
 }
 
 #[tauri::command]
-fn load_note(job_id: String, state: State<'_, AppState>) -> Result<summary::NoteResult, String> {
-    summary::load_note(&current_task_data_directory(&state)?, &job_id)
+fn load_note(job_id: String, state: State<'_, AppState>) -> Result<summary::NoteResult, AppError> {
+    Ok(summary::load_note(&current_task_data_directory(&state)?, &job_id)?)
 }
 
 #[tauri::command]
@@ -1330,6 +1365,7 @@ pub fn run() {
             delete_task,
             export_task_audio,
             parse_video_input,
+            search_videos,
             inspect_media_tools,
             prepare_media,
             load_media,

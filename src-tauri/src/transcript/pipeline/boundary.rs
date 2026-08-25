@@ -184,7 +184,9 @@ fn merge_adjacent_segments(
             let gap = seg.start_ms.saturating_sub(prev.end_ms);
             let no_strong_terminal = !ends_strong(prev.text.trim());
             let combined_len = prev.text.chars().count() + seg.text.chars().count();
-            let max_len = if profile.prefers_cjk_spacing() { 90 } else { 180 };
+            let combined_duration = seg.end_ms.saturating_sub(prev.start_ms);
+            let max_len = if profile.prefers_cjk_spacing() { 36 } else { 120 };
+            let max_duration = if profile.prefers_cjk_spacing() { 6500 } else { 8000 };
             let threshold = match profile {
                 LanguageProfile::En => 420,
                 LanguageProfile::Zh | LanguageProfile::Ja | LanguageProfile::Ko => 520,
@@ -205,6 +207,7 @@ fn merge_adjacent_segments(
                 && gap <= threshold
                 && no_strong_terminal
                 && combined_len <= max_len
+                && combined_duration <= max_duration
             {
                 let before = format!("{} | {}", prev.text, seg.text);
                 let mut source_ids = prev.source_token_ids();

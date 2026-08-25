@@ -17,15 +17,23 @@ interface SettingsPageProps {
   onAutoPlayOnTranscriptClickChange: (enabled: boolean) => void;
 }
 
+let memoryCachedMediaTools: MediaToolsStatus | null = null;
+let memoryCachedDataDirectory: DataDirectorySettings | null = null;
+
+const toolDescriptions: Record<string, string> = {
+  "yt-dlp": "用于公开视频链接解析与音视频资源下载",
+  "FFmpeg": "用于音视频格式转码与 16kHz 标准音频提取",
+  "ffprobe": "用于音视频流编码与时长元信息分析",
+};
+
 export function SettingsPage({
   autoPlayOnTranscriptClick,
   onAutoPlayOnTranscriptClickChange,
 }: SettingsPageProps) {
   const [autoClean, setAutoClean] = useState(true);
   const [lowPriority, setLowPriority] = useState(true);
-  const [diagnostics, setDiagnostics] = useState(false);
-  const [mediaTools, setMediaTools] = useState<MediaToolsStatus | null>(null);
-  const [dataDirectory, setDataDirectory] = useState<DataDirectorySettings | null>(null);
+  const [mediaTools, setMediaTools] = useState<MediaToolsStatus | null>(memoryCachedMediaTools);
+  const [dataDirectory, setDataDirectory] = useState<DataDirectorySettings | null>(memoryCachedDataDirectory);
   const [directoryBusy, setDirectoryBusy] = useState(false);
   const [directoryFeedback, setDirectoryFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const [asrSettings, setAsrSettings] = useState(loadAsrSettings);
@@ -41,6 +49,8 @@ export function SettingsPage({
     void Promise.all([runtime.inspectMediaTools(), runtime.inspectDataDirectory()])
       .then(([tools, directory]) => {
         if (!active) return;
+        memoryCachedMediaTools = tools;
+        memoryCachedDataDirectory = directory;
         setMediaTools(tools);
         setDataDirectory(directory);
       })
@@ -59,6 +69,7 @@ export function SettingsPage({
     try {
       const selected = await runtime.chooseDataDirectory();
       if (selected) {
+        memoryCachedDataDirectory = selected;
         setDataDirectory(selected);
         setDirectoryFeedback({ kind: "success", message: "数据目录已更新，已有任务数据已复制到新位置。" });
       }
@@ -75,6 +86,7 @@ export function SettingsPage({
     setDirectoryFeedback(null);
     try {
       const reset = await runtime.resetDataDirectory();
+      memoryCachedDataDirectory = reset;
       setDataDirectory(reset);
       setDirectoryFeedback({ kind: "success", message: "已恢复默认数据目录，已有任务数据已复制回默认位置。" });
     } catch (reason) {
@@ -101,7 +113,7 @@ export function SettingsPage({
             <div className="setting-row tool-status-row" key={tool.name}>
               <div>
                 <strong>{tool.name}</strong>
-                <span title={tool.path}>{tool.version ?? (tool.available ? "版本信息不可用" : "安装包中未找到该组件")}</span>
+                <span title={tool.path}>{toolDescriptions[tool.name] ?? (tool.available ? "组件正常运行" : "安装包中未找到该组件")}</span>
               </div>
               <span className={`tool-health ${tool.available ? "is-ready" : "is-missing"}`}>
                 {tool.available ? <Check size={14} aria-hidden="true" /> : <CircleAlert size={14} aria-hidden="true" />}
@@ -190,10 +202,6 @@ export function SettingsPage({
         <div className="setting-row">
           <div><strong>完成后删除临时音频</strong><span>保留转录和 Markdown，不保留原始音频</span></div>
           <Toggle checked={autoClean} onChange={() => setAutoClean((value) => !value)} label="完成后删除临时音频" />
-        </div>
-        <div className="setting-row">
-          <div><strong>发送匿名诊断信息</strong><span>默认关闭；不会包含链接、转录或文档内容</span></div>
-          <Toggle checked={diagnostics} onChange={() => setDiagnostics((value) => !value)} label="发送匿名诊断信息" />
         </div>
       </section>
     </section>

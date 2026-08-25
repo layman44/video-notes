@@ -2,31 +2,73 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { initialJobs } from "../data";
 import type { TranscriptViewMode } from "./preferences";
-import type {
-  AsrModelStatus,
-  AsrPhaseEvent,
-  AsrPhaseProgress,
-  DataDirectorySettings,
-  Job,
-  MediaPreparationResult,
-  MediaProgress,
-  MediaToolsStatus,
-  ModelDownloadProgress,
-  NoteResult,
-  ReconciledJob,
-  SourcePreview,
-  SummaryModelStatus,
-  SummaryProgress,
-  SystemProfile,
-  TranscriptResult,
-  TranslationModelStatus,
-  TranslationProgress,
+import {
+  modelKindFromId,
+  type AppError,
+  type AsrModelStatus,
+  type AsrPhaseEvent,
+  type AsrPhaseProgress,
+  type DataDirectorySettings,
+  type Job,
+  type MediaPreparationResult,
+  type MediaProgress,
+  type MediaToolsStatus,
+  type ModelDownloadProgress,
+  type NoteResult,
+  type ReconciledJob,
+  type SearchResultItem,
+  type SearchResultResponse,
+  type SourcePreview,
+  type SummaryModelStatus,
+  type SummaryProgress,
+  type SystemProfile,
+  type TranscriptResult,
+  type TranslationModelStatus,
+  type TranslationProgress,
 } from "../types";
+
+export function normalizeAppError(error: unknown): AppError {
+  if (typeof error === "object" && error !== null) {
+    const errObj = error as Record<string, unknown>;
+    if (typeof errObj.message === "string" && errObj.message.trim()) {
+      return {
+        code: typeof errObj.code === "string" ? errObj.code : "UNKNOWN_ERROR",
+        message: errObj.message,
+        details: typeof errObj.details === "string" ? errObj.details : undefined,
+      };
+    }
+  }
+  if (typeof error === "string" && error.trim()) {
+    return {
+      code: "UNKNOWN_ERROR",
+      message: error,
+    };
+  }
+  if (error instanceof Error && error.message) {
+    return {
+      code: "UNKNOWN_ERROR",
+      message: error.message,
+    };
+  }
+  return {
+    code: "UNKNOWN_ERROR",
+    message: String(error || "未知错误"),
+  };
+}
+
+export function formatErrorMessage(error: unknown, fallback = "操作失败"): string {
+  if (!error) return fallback;
+  const normalized = normalizeAppError(error);
+  return normalized.message || fallback;
+}
 
 export const isTauri = () => typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 
 const wait = (milliseconds: number) =>
   new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+
+const SEARCH_PAGE_SIZE = 10;
+const BROWSER_DEMO_SEARCH_TOTAL = 96;
 
 let browserDemoModelInstalled = false;
 let browserDemoSummaryModelInstalled = false;
@@ -78,6 +120,53 @@ export const runtime = {
       platform,
       duration: platform === "douyin" ? "08:36" : "28:47",
       sourceUrl: url,
+    };
+  },
+
+  async searchVideos(
+    keyword: string,
+    order?: string,
+    duration?: number,
+    page?: number
+  ): Promise<SearchResultResponse> {
+    if (isTauri()) {
+      return invoke<SearchResultResponse>("search_videos", { keyword, order, duration, page });
+    }
+    await wait(400);
+    const targetPage = Math.max(page ?? 1, 1);
+    const firstResultIndex = (targetPage - 1) * SEARCH_PAGE_SIZE;
+    const resultCount = Math.max(
+      0,
+      Math.min(SEARCH_PAGE_SIZE, BROWSER_DEMO_SEARCH_TOTAL - firstResultIndex),
+    );
+    const demoAuthors = ["科技UP主", "知识充电站", "代码实验室", "AI 学习社", "硬核研究所"];
+    const demoCovers = [
+      "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600",
+      "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=600",
+    ];
+
+    return {
+      items: Array.from({ length: resultCount }, (_, index) => {
+        const resultNumber = firstResultIndex + index + 1;
+        const videoId = `BV1demo${String(resultNumber).padStart(3, "0")}`;
+        return {
+          id: videoId,
+          title:
+            index % 2 === 0
+              ? `【演示 ${resultNumber}】关于“${keyword}”的深度解析与实战`
+              : `【教程 ${resultNumber}】快速掌握 ${keyword} 核心技巧`,
+          author: demoAuthors[index % demoAuthors.length],
+          platform: "bilibili",
+          duration: `${10 + (resultNumber % 20)}:${String((resultNumber * 7) % 60).padStart(2, "0")}`,
+          coverUrl: demoCovers[index % demoCovers.length],
+          videoUrl: `https://www.bilibili.com/video/${videoId}`,
+          playCount: `${(14.8 - (resultNumber % 9) * 0.7).toFixed(1)}万`,
+          pubDate: `2025-06-${String(Math.max(1, 28 - (resultNumber % 28))).padStart(2, "0")}`,
+        } satisfies SearchResultItem;
+      }),
+      totalPages: Math.ceil(BROWSER_DEMO_SEARCH_TOTAL / SEARCH_PAGE_SIZE),
+      totalCount: BROWSER_DEMO_SEARCH_TOTAL,
+      page: targetPage,
     };
   },
 
@@ -233,7 +322,7 @@ export const runtime = {
       return this.inspectAsrModel();
     }
     const unlisten = await listen<ModelDownloadProgress>("model-download-progress", ({ payload }) => {
-      if (payload.modelId === "funasr-nano" || payload.modelId.includes("funasr") || payload.modelId.includes("nano")) {
+      if (modelKindFromId(payload.modelId) === "asr") {
         onProgress(payload);
       }
     });
@@ -255,7 +344,7 @@ export const runtime = {
   async downloadMossModel(onProgress: (progress: ModelDownloadProgress) => void): Promise<AsrModelStatus> {
     if (!isTauri()) return this.inspectMossModel();
     const unlisten = await listen<ModelDownloadProgress>("model-download-progress", ({ payload }) => {
-      if (payload.modelId.includes("moss") || payload.modelId.includes("openasr")) onProgress(payload);
+      if (modelKindFromId(payload.modelId) === "moss") onProgress(payload);
     });
     try {
       return await invoke<AsrModelStatus>("download_moss_model");
@@ -297,7 +386,7 @@ export const runtime = {
       return this.inspectSummaryModel();
     }
     const unlisten = await listen<ModelDownloadProgress>("model-download-progress", ({ payload }) => {
-      if (payload.modelId.includes("qwen") || payload.modelId.includes("summary")) {
+      if (modelKindFromId(payload.modelId) === "summary") {
         onProgress(payload);
       }
     });
@@ -345,7 +434,7 @@ export const runtime = {
       return this.inspectTranslationModel();
     }
     const unlisten = await listen<ModelDownloadProgress>("model-download-progress", ({ payload }) => {
-      if (payload.modelId.includes("milmmt") || payload.modelId.includes("translation")) {
+      if (modelKindFromId(payload.modelId) === "translation") {
         onProgress(payload);
       }
     });
@@ -372,6 +461,7 @@ export const runtime = {
     jobId: string,
     onPhase: (event: AsrPhaseEvent) => void,
     onProgress: (progress: AsrPhaseProgress) => void,
+    resume?: boolean,
   ): Promise<TranscriptResult> {
     if (!isTauri()) {
       await wait(500);
@@ -393,7 +483,7 @@ export const runtime = {
       if (payload.jobId === jobId) onProgress(payload);
     });
     try {
-      return await invoke<TranscriptResult>("transcribe_media", { jobId });
+      return await invoke<TranscriptResult>("transcribe_media", { jobId, resume: Boolean(resume) });
     } finally {
       unlistenPhase();
       unlistenProgress();

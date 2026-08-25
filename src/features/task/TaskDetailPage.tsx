@@ -28,16 +28,17 @@ import {
   type TranscriptDisplayMode,
   type TranscriptViewMode,
 } from "../../lib/preferences";
-import { runtime } from "../../lib/runtime";
-import type {
-  AsrPhaseEvent,
-  AsrPipelinePhase,
-  AsrPhaseProgress,
-  AsrSnapshot,
-  Job,
-  MediaPreparationResult,
-  NoteResult,
-  ProcessingStep,
+import { formatErrorMessage, runtime } from "../../lib/runtime";
+import {
+  isMossBackend,
+  type AsrPhaseEvent,
+  type AsrPipelinePhase,
+  type AsrPhaseProgress,
+  type AsrSnapshot,
+  type Job,
+  type MediaPreparationResult,
+  type NoteResult,
+  type ProcessingStep,
   TaskTab,
   TranscriptResult,
   TranscriptSegment,
@@ -50,7 +51,8 @@ interface TaskDetailPageProps {
   onNavigateToModels?: () => void;
   onComplete: (jobId: string) => void;
   onCancelMedia: () => Promise<boolean>;
-  onRetryMedia: () => void;
+  onResetJob?: () => Promise<void> | void;
+  onRetryMedia: (options?: { resume?: boolean }) => void;
   onTranslate: () => void;
   onOrganize: () => void;
   onReorganize: () => void;
@@ -150,7 +152,7 @@ function buildRealSteps(job: Job): ProcessingStep[] {
   const transcriptionActive = job.status === "processing" && [
     "recognition", "pause_alignment", "verification", "boundary_review", "word_alignment", "standardization", "semantic_segmentation",
   ].includes(job.phase ?? "");
-  const mediaDone = !mediaActive && (job.status === "waiting" || job.status === "transcribed" || job.status === "completed" || transcriptionActive || job.phase === "translation" || job.phase === "summary");
+  const mediaDone = !mediaActive && (job.status === "transcribed" || job.status === "completed" || transcriptionActive || job.phase === "translation" || job.phase === "summary");
   const transcriptDone = job.status === "transcribed" || job.status === "completed" || job.phase === "translation" || job.phase === "summary";
   const phaseDetail = job.phaseTotal && job.phaseCompleted != null
     ? `${job.phaseCompleted} / ${job.phaseTotal}`
@@ -175,8 +177,8 @@ function ProcessingRail({
   waiting: boolean;
   failed: boolean;
 }) {
-  const summaryTitle = completed ? "处理完成" : transcribed ? "真实转录已完成" : waiting ? "音频已就绪" : failed ? "处理失败" : "本地处理中";
-  const summaryDetail = completed ? "笔记已生成" : transcribed ? "可人工校正，并按需翻译或生成笔记" : waiting ? "等待语音模型" : failed ? "可以重新尝试" : "保持窗口打开即可";
+  const summaryTitle = completed ? "处理完成" : transcribed ? "真实转录已完成" : waiting ? "等待处理" : failed ? "处理失败" : "本地处理中";
+  const summaryDetail = completed ? "笔记已生成" : transcribed ? "可人工校正，并按需翻译或生成笔记" : waiting ? "等待开始下载与转录" : failed ? "可以重新尝试" : "保持窗口打开即可";
   return (
     <aside className="processing-rail" aria-label="处理记录">
       <div className="rail-heading">
@@ -423,7 +425,7 @@ function VideoTranscriptWorkspace({
   const mediaPercent = job.phaseTotal && job.phaseCompleted != null && job.phaseTotal > 0
     ? Math.min(100, Math.max(0, Math.round((job.phaseCompleted / job.phaseTotal) * 100)))
     : 0;
-  const isConnecting = isDownloadingMedia && (mediaPercent <= 5 || mediaStatus.includes("连接") || Boolean(job.statusMessage?.includes("连接")));
+  const isConnecting = isDownloadingMedia && mediaPercent <= 5;
   const activeSegment = useMemo(
     () => findActiveSegment(segments, currentTimeMs),
     [currentTimeMs, segments],
@@ -462,7 +464,7 @@ function VideoTranscriptWorkspace({
       onSegmentEdited?.(editingId, editingText.trim());
       setEditingId(null);
     } catch (reason) {
-      window.alert(reason instanceof Error ? reason.message : String(reason));
+      window.alert(formatErrorMessage(reason));
     } finally {
       setSavingEdit(false);
     }
@@ -484,7 +486,7 @@ function VideoTranscriptWorkspace({
       })
       .catch((reason) => {
         if (!active) return;
-        const message = reason instanceof Error ? reason.message : String(reason);
+        const message = formatErrorMessage(reason);
         setViewError(message);
         setViewMode("standard");
         saveTranscriptViewMode("standard");
@@ -874,6 +876,7 @@ export function TaskDetailPage({
   onNavigateToModels,
   onComplete,
   onCancelMedia,
+  onResetJob,
   onRetryMedia,
   onTranslate,
   onOrganize,
@@ -905,7 +908,7 @@ export function TaskDetailPage({
   const [noteError, setNoteError] = useState("");
   const [isExporting, setIsExporting] = useState(false);
   const [exportFeedback, setExportFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(null);
-  const [isCancelling, setIsCancelling] = useState(false);
+  const [actionPending, setActionPending] = useState<"pause" | "cancel" | null>(null);
   const [cancelFeedback, setCancelFeedback] = useState<string | null>(null);
   const [liveSegments, setLiveSegments] = useState<{ startMs: number; text: string }[]>([]);
   const isComplete = !isReorganizing && (usesRealMediaPipeline ? job.status === "completed" : (job.status === "completed" || progress >= 100));
@@ -922,7 +925,11 @@ export function TaskDetailPage({
     ? "complete"
     : isTranscribed || job.phase === "translation" || job.phase === "summary"
       ? "transcribed"
-      : "none";
+      : job.status === "paused"
+        ? "paused"
+        : (job.status === "processing" && (isAsrPhase || !job.phase || job.phase === "media_normalize" || job.phase === "recognition"))
+          ? "processing"
+          : "none";
 
   useEffect(() => {
     realTranscriptRef.current = realTranscript;
@@ -930,6 +937,11 @@ export function TaskDetailPage({
 
   useEffect(() => {
     setRawTranscript(null);
+    setRealTranscript(null);
+    setLiveSegments([]);
+    setRealNote(null);
+    setNoteError("");
+    setTranscriptError("");
     setAsrPipelinePhase(null);
     setAsrPhaseMessage("");
     setAsrPhaseProgress(null);
@@ -971,6 +983,11 @@ export function TaskDetailPage({
 
       if (payload.view === "raw") {
         setRawTranscript((prev) => updateFromSnapshot(prev, false));
+        if (payload.segments?.length) {
+          setTranscriptLoading(false);
+          setTranscriptRefreshing(false);
+          setTranscriptError("");
+        }
       } else {
         setRealTranscript((prev) => updateFromSnapshot(prev, true));
         if (payload.segments?.length || payload.pauseRepairs?.length) {
@@ -1063,7 +1080,7 @@ export function TaskDetailPage({
     let active = true;
     if (isTranscribed) setActiveTab("workspace");
     const hasExistingTranscript = Boolean(realTranscriptRef.current?.segments.length);
-    setTranscriptLoading(!hasExistingTranscript);
+    setTranscriptLoading(!hasExistingTranscript && transcriptLoadMilestone !== "processing");
     setTranscriptRefreshing(hasExistingTranscript);
     setTranscriptError("");
 
@@ -1074,10 +1091,13 @@ export function TaskDetailPage({
       .then((result) => {
         if (!active) return;
         setRealTranscript(result);
+        if (result && result.segments.length > 0) {
+          setRawTranscript(result);
+        }
       })
       .catch((reason) => {
         if (!active) return;
-        setTranscriptError(reason instanceof Error ? reason.message : String(reason));
+        setTranscriptError(formatErrorMessage(reason));
       })
       .finally(() => {
         if (!active) return;
@@ -1108,7 +1128,7 @@ export function TaskDetailPage({
           }
         })
         .catch((reason) => {
-          if (active) setMediaError(reason instanceof Error ? reason.message : String(reason));
+          if (active) setMediaError(formatErrorMessage(reason));
         })
         .finally(() => {
           if (active) setMediaLoading(false);
@@ -1134,7 +1154,7 @@ export function TaskDetailPage({
         setMedia(result);
         setMediaStatus("本地视频已准备完成");
       })
-      .catch((reason) => setMediaError(reason instanceof Error ? reason.message : String(reason)))
+      .catch((reason) => setMediaError(formatErrorMessage(reason)))
       .finally(() => setMediaLoading(false));
   }, [job.id, job.sourceUrl, mediaLoading, usesRealMediaPipeline]);
 
@@ -1149,7 +1169,7 @@ export function TaskDetailPage({
         if (active) setRealNote(result);
       })
       .catch((reason) => {
-        if (active) setNoteError(reason instanceof Error ? reason.message : String(reason));
+        if (active) setNoteError(formatErrorMessage(reason));
       })
       .finally(() => {
         if (active) setNoteLoading(false);
@@ -1204,21 +1224,51 @@ export function TaskDetailPage({
     onTranscriptEdited();
   }, [onTranscriptEdited]);
 
+  const handleRetryMedia = useCallback((opts?: { resume?: boolean }) => {
+    if (!opts?.resume) {
+      setRealTranscript(null);
+      setRawTranscript(null);
+      setLiveSegments([]);
+      setRealNote(null);
+      setNoteError("");
+      setTranscriptError("");
+      setAsrPipelinePhase(null);
+      setAsrPhaseMessage("");
+      setAsrPhaseProgress(null);
+      setActiveTab("workspace");
+    }
+    onRetryMedia(opts);
+  }, [onRetryMedia]);
+
+  const handleResetJob = useCallback(async () => {
+    setRealTranscript(null);
+    setRawTranscript(null);
+    setLiveSegments([]);
+    setRealNote(null);
+    setNoteError("");
+    setTranscriptError("");
+    setAsrPipelinePhase(null);
+    setAsrPhaseMessage("");
+    setAsrPhaseProgress(null);
+    setActiveTab("workspace");
+    if (onResetJob) {
+      await onResetJob();
+    } else {
+      await onCancelMedia();
+    }
+  }, [onResetJob, onCancelMedia]);
+
   const cancelTask = async () => {
-    if (isCancelling) return;
-    setIsCancelling(true);
-    setCancelFeedback(null);
+    if (actionPending) return;
+    setActionPending("pause");
+    setCancelFeedback("正在停止后台处理，已完成的转写与整理片段会保留");
     try {
-      const cancelled = await onCancelMedia();
-      setCancelFeedback(
-        cancelled
-          ? "正在停止后台处理，已完成的转写与整理片段会保留"
-          : "当前没有正在运行的后台处理，无需取消",
-      );
+      await onCancelMedia();
     } catch {
-      setCancelFeedback("取消失败，请稍后重试");
+      setCancelFeedback("暂停失败，请稍后重试");
     } finally {
-      setIsCancelling(false);
+      setActionPending(null);
+      setCancelFeedback(null);
     }
   };
 
@@ -1307,7 +1357,7 @@ export function TaskDetailPage({
                   <RefreshCw size={17} />
                   生成笔记
                 </button>
-                {onNavigateToModels && (job.statusMessage?.includes("模型") || job.statusMessage?.includes("下载")) ? (
+                {onNavigateToModels && job.errorCode === "MODEL_NOT_INSTALLED" ? (
                   <button className="secondary-button" type="button" onClick={onNavigateToModels}>
                     <Sparkles size={16} />
                     前往模型管理
@@ -1319,55 +1369,116 @@ export function TaskDetailPage({
               </div>
             ) : isFailed || (usesRealMediaPipeline && job.status === "paused") ? (
               <div className="export-action">
-                <button className="secondary-button" type="button" onClick={onRetryMedia}>
-                  <RefreshCw size={17} />
-                  {isFailed ? "重新尝试" : "继续准备"}
-                </button>
-                {onNavigateToModels && (job.errorMessage?.includes("模型") || job.statusMessage?.includes("模型") || job.errorMessage?.includes("下载") || job.statusMessage?.includes("下载")) ? (
+                {job.phase === "media_download" ? (
+                  <button className="secondary-button" type="button" onClick={() => handleRetryMedia()}>
+                    {job.status === "paused" ? <Play size={17} /> : <RefreshCw size={17} />}
+                    {job.status === "paused" ? "继续下载" : "重新下载"}
+                  </button>
+                ) : isMossBackend(job.asrBackend) ? (
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button className="secondary-button" type="button" onClick={() => handleRetryMedia({ resume: true })}>
+                      <Play size={17} />
+                      继续转写
+                    </button>
+                    <button className="secondary-button" type="button" onClick={() => handleRetryMedia({ resume: false })}>
+                      <RefreshCw size={17} />
+                      重新开始
+                    </button>
+                  </div>
+                ) : (
+                  <button className="secondary-button" type="button" onClick={() => handleRetryMedia({ resume: false })}>
+                    <RefreshCw size={17} />
+                    重新开始
+                  </button>
+                )}
+                {onNavigateToModels && job.errorCode === "MODEL_NOT_INSTALLED" ? (
                   <button className="secondary-button" type="button" onClick={onNavigateToModels}>
                     <Sparkles size={16} />
                     前往模型管理
                   </button>
                 ) : null}
                 {job.errorMessage || job.statusMessage ? (
-                  <span className="cancel-feedback is-error" role="status">{job.errorMessage || job.statusMessage}</span>
+                  <span
+                    className={`cancel-feedback ${isFailed || Boolean(job.errorMessage) ? "is-error" : ""}`}
+                    role="status"
+                  >
+                    {job.errorMessage || job.statusMessage}
+                  </span>
                 ) : null}
               </div>
             ) : isWaiting ? (
               <div className="export-action">
-                <button className="secondary-button" type="button" onClick={onRetryMedia}>
-                  <RefreshCw size={17} />
+                <button className="secondary-button" type="button" onClick={() => handleRetryMedia({ resume: false })}>
+                  <Play size={17} />
                   开始转写
                 </button>
-                {onNavigateToModels && (job.statusMessage?.includes("模型") || job.statusMessage?.includes("下载")) ? (
+                {onNavigateToModels && job.errorCode === "MODEL_NOT_INSTALLED" ? (
                   <button className="secondary-button" type="button" onClick={onNavigateToModels}>
                     <Sparkles size={16} />
                     前往模型管理
                   </button>
                 ) : null}
                 {job.statusMessage ? (
-                  <span className="cancel-feedback is-error" role="status">{job.statusMessage}</span>
+                  <span className="cancel-feedback" role="status">{job.statusMessage}</span>
                 ) : null}
               </div>
             ) : (
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={isCancelling}
-                onClick={() => {
-                  if (usesRealMediaPipeline) void cancelTask();
-                  else setIsPaused((current) => !current);
-                }}
-              >
-                {usesRealMediaPipeline ? (
-                  isCancelling ? <Loader2 size={17} className="spin" /> : <Pause size={17} />
-                ) : isPaused ? <RefreshCw size={17} /> : <Pause size={17} />}
-                {usesRealMediaPipeline ? (isCancelling ? "正在取消…" : "取消任务") : isPaused ? "继续处理" : "暂停任务"}
-              </button>
+              <div className="export-action">
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={Boolean(actionPending)}
+                    onClick={() => {
+                      if (usesRealMediaPipeline) void cancelTask();
+                      else setIsPaused((current) => !current);
+                    }}
+                  >
+                    {usesRealMediaPipeline ? (
+                      actionPending === "pause" ? <Loader2 size={17} className="spin" /> : <Pause size={17} />
+                    ) : isPaused ? <RefreshCw size={17} /> : <Pause size={17} />}
+                    {usesRealMediaPipeline
+                      ? actionPending === "pause"
+                        ? "正在暂停…"
+                        : job.phase === "media_download"
+                          ? "暂停下载"
+                          : job.phase === "translation"
+                            ? "取消翻译"
+                            : job.phase === "summary"
+                              ? "取消生成"
+                              : "暂停转写"
+                      : isPaused
+                        ? "继续处理"
+                        : "暂停任务"}
+                  </button>
+                  {usesRealMediaPipeline && (job.phase === "recognition" || !job.phase || job.phase === "media_download") ? (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={Boolean(actionPending)}
+                      title="取消当前进度并重置任务"
+                      onClick={async () => {
+                        if (actionPending) return;
+                        setActionPending("cancel");
+                        setCancelFeedback("正在取消并重置任务…");
+                        try {
+                          await handleResetJob();
+                        } finally {
+                          setActionPending(null);
+                          setCancelFeedback(null);
+                        }
+                      }}
+                    >
+                      {actionPending === "cancel" ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+                      {actionPending === "cancel" ? "正在取消…" : "取消任务"}
+                    </button>
+                  ) : null}
+                </div>
+                {cancelFeedback ? (
+                  <span className="cancel-feedback" role="status">{cancelFeedback}</span>
+                ) : null}
+              </div>
             )}
-            {cancelFeedback ? (
-              <span className="cancel-feedback" role="status">{cancelFeedback}</span>
-            ) : null}
           </div>
         </header>
 

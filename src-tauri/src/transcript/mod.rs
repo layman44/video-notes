@@ -119,7 +119,7 @@ mod tests {
             RawSegment { id:"a".into(), start_ms:0, end_ms:200, text:"um".into(), tokens:vec![token(1,"um",0,200)] },
             RawSegment { id:"b".into(), start_ms:1000, end_ms:1400, text:"人工智能".into(), tokens:vec![token(2,"人工智能",1000,1400)] },
         ]);
-        let (canonical, _) = run_canonical_pipeline(&raw, &PipelineConfig { is_english_audio: true, boundary_evidence: Vec::new(), punctuation_repairs: Vec::new(), verification_rewrites: Vec::new(), surface_repairs: Vec::new(), bridge_rewrites: Vec::new() });
+        let (canonical, _) = run_canonical_pipeline(&raw, &PipelineConfig { is_english_audio: true, preserve_lexical_fidelity: false, boundary_evidence: Vec::new(), punctuation_repairs: Vec::new(), verification_rewrites: Vec::new(), surface_repairs: Vec::new(), bridge_rewrites: Vec::new() });
         assert_eq!(canonical.segments.len(), 2);
         assert!(canonical.segments.iter().any(|s| s.text.contains("人工智能")));
     }
@@ -141,7 +141,7 @@ mod tests {
             id:"a".into(), start_ms:0, end_ms:800, text:"no no no!".into(),
             tokens:vec![token(1,"no",0,150), token(2,"no",180,330), token(3,"no",360,510), token(4,"!",520,530)],
         }]);
-        let (canonical, _) = run_canonical_pipeline(&raw, &PipelineConfig { is_english_audio:true, boundary_evidence: Vec::new(), punctuation_repairs: Vec::new(), verification_rewrites: Vec::new(), surface_repairs: Vec::new(), bridge_rewrites: Vec::new() });
+        let (canonical, _) = run_canonical_pipeline(&raw, &PipelineConfig { is_english_audio: true, preserve_lexical_fidelity: false, boundary_evidence: Vec::new(), punctuation_repairs: Vec::new(), verification_rewrites: Vec::new(), surface_repairs: Vec::new(), bridge_rewrites: Vec::new() });
         assert_eq!(canonical.segments[0].text, "no no no!");
     }
 
@@ -192,6 +192,7 @@ mod tests {
         }]);
         let config = PipelineConfig {
             is_english_audio: true,
+            preserve_lexical_fidelity: false,
             boundary_evidence: Vec::new(),
             punctuation_repairs: Vec::new(),
             verification_rewrites: Vec::new(),
@@ -230,6 +231,7 @@ mod tests {
         };
         let (canonical, _) = run_canonical_pipeline(&raw, &PipelineConfig {
             is_english_audio: true,
+            preserve_lexical_fidelity: false,
             boundary_evidence: vec![evidence],
             punctuation_repairs: Vec::new(),
             verification_rewrites: Vec::new(),
@@ -255,7 +257,13 @@ mod tests {
             kind: BoundaryEvidenceKind::AcousticPause,
         };
         let (canonical, _) = run_canonical_pipeline(&raw, &PipelineConfig {
-            is_english_audio: true, boundary_evidence: vec![pause], punctuation_repairs: Vec::new(), verification_rewrites: Vec::new(), surface_repairs: Vec::new(), bridge_rewrites: Vec::new(),
+            is_english_audio: true,
+            preserve_lexical_fidelity: false,
+            boundary_evidence: vec![pause],
+            punctuation_repairs: Vec::new(),
+            verification_rewrites: Vec::new(),
+            surface_repairs: Vec::new(),
+            bridge_rewrites: Vec::new(),
         });
         assert_eq!(canonical.segments.len(), 4);
         assert!(canonical.segments.iter().any(|s| s.text == "Her clothes were worn out, torn, and covered with patches."));
@@ -286,6 +294,7 @@ mod tests {
         ]);
         let config = PipelineConfig {
             is_english_audio: false,
+            preserve_lexical_fidelity: false,
             boundary_evidence: Vec::new(),
             punctuation_repairs: Vec::new(),
             verification_rewrites: Vec::new(),
@@ -315,6 +324,7 @@ mod tests {
         ]);
         let config = PipelineConfig {
             is_english_audio: true,
+            preserve_lexical_fidelity: false,
             boundary_evidence: Vec::new(),
             punctuation_repairs: Vec::new(),
             verification_rewrites: Vec::new(),
@@ -345,6 +355,7 @@ mod tests {
         ]);
         let config = PipelineConfig {
             is_english_audio: true,
+            preserve_lexical_fidelity: false,
             boundary_evidence: Vec::new(),
             punctuation_repairs: Vec::new(),
             surface_repairs: Vec::new(),
@@ -361,6 +372,24 @@ mod tests {
         assert!(!canonical.segments.iter().any(|s| s.text.contains('起')));
         assert_eq!(raw.segments[2].text, "起。");
         assert!(log.records.iter().any(|r| r.stage == TransformStage::Verification && r.operation == TransformOperation::VerificationCorrection));
+    }
+
+    #[test]
+    fn moss_preserves_spoken_numbers_without_itn_mangling() {
+        let raw = raw_with_tokens("Chinese", vec![RawSegment {
+            id: "moss1".into(),
+            start_ms: 0,
+            end_ms: 3_000,
+            text: "报道时间八月十三日十三点三十六分。".into(),
+            tokens: vec![],
+        }]);
+        let config = PipelineConfig {
+            preserve_lexical_fidelity: true,
+            ..PipelineConfig::default()
+        };
+        let (canonical, _) = run_canonical_pipeline(&raw, &config);
+        assert_eq!(canonical.segments.len(), 1);
+        assert_eq!(canonical.segments[0].text, "报道时间八月十三日十三点三十六分。");
     }
 
     #[test]
@@ -381,8 +410,8 @@ mod tests {
         raw2.metadata.raw_content_hash = None;
         raw2.metadata.raw_revision_id = None;
         let h2 = raw_content_hash(&raw2).unwrap();
-        let r2 = raw_revision_id(&raw2).unwrap();
         raw2.metadata.raw_content_hash = Some(h2);
+        let r2 = raw_revision_id(&raw2).unwrap();
         raw2.metadata.raw_revision_id = Some(r2.clone());
         save_raw_revision(&base, &raw2).unwrap();
 
@@ -393,5 +422,4 @@ mod tests {
         assert_eq!(current.metadata.raw_revision_id.as_deref(), Some(r2.as_str()));
         let _ = std::fs::remove_dir_all(&base);
     }
-
 }
