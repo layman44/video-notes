@@ -1713,6 +1713,7 @@ select:focus-visible,
 .translation-action:hover { border-color: var(--accent); background: rgba(29, 95, 242, .05); }
 .translation-action:disabled { cursor: wait; opacity: .55; }
 .workspace-pane-hint { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 3px 0 10px; color: var(--subtle); font-size: 11px; }
+.workspace-pane-status { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px; }
 .workspace-pane-hint span:last-child { color: var(--muted); }
 .workspace-transcript-pane .detail-search { flex: 1; min-width: 0; }
 .workspace-transcript-pane .detail-search input { width: 100%; }
@@ -1736,6 +1737,8 @@ select:focus-visible,
   .video-detail-page .video-detail-header h1 { font-size: 20px; }
   .workspace-pane-toolbar { align-items: stretch; flex-direction: column; }
   .workspace-toolbar-actions { flex-wrap: wrap; justify-content: flex-start; }
+  .workspace-pane-hint { align-items: flex-start; flex-wrap: wrap; }
+  .workspace-pane-hint > span:last-child { margin-left: auto; }
 }
 
 /* Workspace primitives kept local to the right-hand content pane. */
