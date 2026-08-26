@@ -4,7 +4,7 @@
 //! remain in their existing modules; this layer owns their ordering,
 //! persistence, recovery, and the library/queue boundary.
 
-use crate::{asr, media, openasr};
+use crate::{asr, media, openasr, translation};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -42,6 +42,30 @@ pub struct VideoRecord {
     pub media_status: String,
     pub transcript_language: Option<String>,
     pub queue_item_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoPage {
+    pub items: Vec<VideoRecord>,
+    pub total: u64,
+    pub page: u32,
+    pub page_size: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoSourceLookupInput {
+    pub platform: String,
+    pub source_url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoSourceLookup {
+    pub platform: String,
+    pub source_url: String,
+    pub video: Option<VideoRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -647,7 +671,7 @@ fn column_exists(db: &Connection, table: &str, column: &str) -> rusqlite::Result
 }
 
 pub fn initialize_database(db: &Connection, task_root: &Path) -> rusqlite::Result<()> {
-    db.execute_batch("PRAGMA foreign_keys=ON; BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS videos(id TEXT PRIMARY KEY,title TEXT NOT NULL,platform TEXT NOT NULL,duration TEXT NOT NULL,source_url TEXT NOT NULL,normalized_source_key TEXT NOT NULL UNIQUE,author TEXT,thumbnail_url TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,library_available_at TEXT,deleted_at TEXT); CREATE TABLE IF NOT EXISTS queue_items(id TEXT PRIMARY KEY,video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,position INTEGER NOT NULL,state TEXT NOT NULL,stage TEXT NOT NULL,progress INTEGER NOT NULL DEFAULT 0,phase_completed INTEGER,phase_total INTEGER,phase_unit TEXT,attempt_count INTEGER NOT NULL DEFAULT 0,asr_backend TEXT,asr_config_json TEXT,error_code TEXT,error_message TEXT,status_message TEXT,created_at TEXT NOT NULL,started_at TEXT,updated_at TEXT NOT NULL,finished_at TEXT); CREATE INDEX IF NOT EXISTS queue_items_order ON queue_items(state,position,created_at); CREATE TABLE IF NOT EXISTS artifacts(video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,artifact_type TEXT NOT NULL,state TEXT NOT NULL,relative_path TEXT,revision INTEGER NOT NULL DEFAULT 1,content_hash TEXT,input_revision INTEGER,updated_at TEXT NOT NULL,PRIMARY KEY(video_id,artifact_type));")?;
+    db.execute_batch("PRAGMA foreign_keys=ON; BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS videos(id TEXT PRIMARY KEY,title TEXT NOT NULL,platform TEXT NOT NULL,duration TEXT NOT NULL,source_url TEXT NOT NULL,normalized_source_key TEXT NOT NULL UNIQUE,author TEXT,thumbnail_url TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,library_available_at TEXT,deleted_at TEXT); DROP INDEX IF EXISTS videos_library_order; DROP INDEX IF EXISTS videos_library_platform_order; CREATE INDEX videos_library_order ON videos(updated_at DESC,id DESC) WHERE library_available_at IS NOT NULL AND deleted_at IS NULL; CREATE INDEX videos_library_platform_order ON videos(platform,updated_at DESC,id DESC) WHERE library_available_at IS NOT NULL AND deleted_at IS NULL; CREATE TABLE IF NOT EXISTS queue_items(id TEXT PRIMARY KEY,video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,position INTEGER NOT NULL,state TEXT NOT NULL,stage TEXT NOT NULL,progress INTEGER NOT NULL DEFAULT 0,phase_completed INTEGER,phase_total INTEGER,phase_unit TEXT,attempt_count INTEGER NOT NULL DEFAULT 0,asr_backend TEXT,asr_config_json TEXT,error_code TEXT,error_message TEXT,status_message TEXT,created_at TEXT NOT NULL,started_at TEXT,updated_at TEXT NOT NULL,finished_at TEXT); CREATE INDEX IF NOT EXISTS queue_items_order ON queue_items(state,position,created_at); CREATE INDEX IF NOT EXISTS queue_items_video_state ON queue_items(video_id,state,position); CREATE TABLE IF NOT EXISTS artifacts(video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,artifact_type TEXT NOT NULL,state TEXT NOT NULL,relative_path TEXT,revision INTEGER NOT NULL DEFAULT 1,content_hash TEXT,input_revision INTEGER,updated_at TEXT NOT NULL,PRIMARY KEY(video_id,artifact_type));")?;
     if !column_exists(db, "queue_items", "status_message")? {
         db.execute("ALTER TABLE queue_items ADD COLUMN status_message TEXT", [])?;
     }
@@ -824,52 +848,152 @@ fn transcript_has_translation(dir: &Path) -> bool {
 
 use serde_json::Value;
 
-pub fn list_videos(db: &Connection, task_root: &Path) -> rusqlite::Result<Vec<VideoRecord>> {
-    let mut s=db.prepare("SELECT id,title,platform,duration,source_url,normalized_source_key,author,thumbnail_url,created_at,updated_at,library_available_at,deleted_at FROM videos WHERE library_available_at IS NOT NULL AND deleted_at IS NULL ORDER BY updated_at DESC")?;
-    let mut rows = s
-        .query_map([], row_video)?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    for video in &mut rows {
-        let mut a = db.prepare("SELECT artifact_type,state FROM artifacts WHERE video_id=?1")?;
-        for record in a.query_map([&video.id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })? {
-            let (kind, state) = record?;
-            match kind.as_str() {
-                "standard_transcript" => video.transcript_status = state,
-                "translation" => video.translation_status = state,
-                "note" => video.note_status = state,
-                _ => {}
-            }
-        }
-        video.queue_item_id=db.query_row("SELECT id FROM queue_items WHERE video_id=?1 AND state NOT IN ('cancelled','completed') LIMIT 1",[&video.id],|r|r.get(0)).optional()?;
-        let dir = task_root.join("tasks").join(&video.id);
-        video.media_status = if valid_media_manifest(&dir) {
-            "available".into()
-        } else {
-            "missing".into()
-        };
-        if video.transcript_status == "ready" && !valid_transcript(&dir) {
-            video.transcript_status = "failed".into();
-        }
-        if video.translation_status == "ready"
-            && !valid_json_file(&dir.join("translation/translation.json"))
-        {
-            video.translation_status = "missing".into();
-        }
-        if video.note_status == "ready" && !valid_json_file(&dir.join("note/note.json")) {
-            video.note_status = "missing".into();
-        }
-        if let Ok(raw) = fs::read_to_string(dir.join("transcript/transcript.json")) {
-            if let Ok(value) = serde_json::from_str::<Value>(&raw) {
-                video.transcript_language = value
-                    .get("language")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string);
-            }
+const VIDEO_COLUMNS: &str = "id,title,platform,duration,source_url,normalized_source_key,author,thumbnail_url,created_at,updated_at,library_available_at,deleted_at";
+
+fn hydrate_video(
+    db: &Connection,
+    task_root: &Path,
+    mut video: VideoRecord,
+) -> rusqlite::Result<VideoRecord> {
+    let mut artifacts = db.prepare("SELECT artifact_type,state FROM artifacts WHERE video_id=?1")?;
+    for record in artifacts.query_map([&video.id], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })? {
+        let (kind, state) = record?;
+        match kind.as_str() {
+            "standard_transcript" => video.transcript_status = state,
+            "translation" => video.translation_status = state,
+            "note" => video.note_status = state,
+            _ => {}
         }
     }
-    Ok(rows)
+    video.queue_item_id = db
+        .query_row(
+            "SELECT id FROM queue_items WHERE video_id=?1 AND state NOT IN ('cancelled','completed') ORDER BY position LIMIT 1",
+            [&video.id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let dir = task_root.join("tasks").join(&video.id);
+    video.media_status = if valid_media_manifest(&dir) {
+        "available".into()
+    } else {
+        "missing".into()
+    };
+    if video.transcript_status == "ready" && !valid_transcript(&dir) {
+        video.transcript_status = "failed".into();
+    }
+    if video.translation_status == "ready"
+        && !valid_json_file(&dir.join("translation/translation.json"))
+    {
+        video.translation_status = "missing".into();
+    }
+    if video.note_status == "ready" && !valid_json_file(&dir.join("note/note.json")) {
+        video.note_status = "missing".into();
+    }
+    if let Ok(raw) = fs::read_to_string(dir.join("transcript/transcript.json")) {
+        if let Ok(value) = serde_json::from_str::<Value>(&raw) {
+            video.transcript_language = value
+                .get("language")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+        }
+    }
+    Ok(video)
+}
+
+fn video_filter_clause() -> &'static str {
+    "library_available_at IS NOT NULL AND deleted_at IS NULL AND (?1 = '' OR instr(lower(title), lower(?1)) > 0 OR instr(lower(COALESCE(author, '')), lower(?1)) > 0 OR instr(lower(source_url), lower(?1)) > 0) AND (?2 = '' OR lower(platform) = lower(?2))"
+}
+
+pub fn list_videos_page(
+    db: &Connection,
+    task_root: &Path,
+    query: Option<&str>,
+    platform: Option<&str>,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> rusqlite::Result<VideoPage> {
+    let query = query.unwrap_or_default().trim();
+    let platform = platform.unwrap_or_default().trim();
+    let page = page.unwrap_or(1).max(1);
+    let page_size = page_size.unwrap_or(20).clamp(1, 100);
+    let total: u64 = db.query_row(
+        &format!("SELECT COUNT(*) FROM videos WHERE {}", video_filter_clause()),
+        params![query, platform],
+        |r| r.get(0),
+    )?;
+    let offset = u64::from(page - 1).saturating_mul(u64::from(page_size));
+    let mut statement = db.prepare(&format!(
+        "SELECT {} FROM videos WHERE {} ORDER BY updated_at DESC, id DESC LIMIT ?3 OFFSET ?4",
+        VIDEO_COLUMNS,
+        video_filter_clause(),
+    ))?;
+    let rows = statement
+        .query_map(params![query, platform, page_size, offset], row_video)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let items = rows
+        .into_iter()
+        .map(|video| hydrate_video(db, task_root, video))
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(VideoPage {
+        items,
+        total,
+        page,
+        page_size,
+    })
+}
+
+pub fn get_video(
+    db: &Connection,
+    task_root: &Path,
+    video_id: &str,
+) -> rusqlite::Result<Option<VideoRecord>> {
+    let video = db
+        .query_row(
+            &format!(
+                "SELECT {} FROM videos WHERE id=?1 AND library_available_at IS NOT NULL AND deleted_at IS NULL",
+                VIDEO_COLUMNS
+            ),
+            [video_id],
+            row_video,
+        )
+        .optional()?;
+    video
+        .map(|record| hydrate_video(db, task_root, record))
+        .transpose()
+}
+
+pub fn lookup_videos_by_sources(
+    db: &Connection,
+    task_root: &Path,
+    sources: &[VideoSourceLookupInput],
+) -> rusqlite::Result<Vec<VideoSourceLookup>> {
+    if sources.len() > 100 {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "sources must contain at most 100 items".into(),
+        ));
+    }
+    sources
+        .iter()
+        .map(|source| {
+            let key = normalize_source_key(&source.platform, &source.source_url);
+            let video = db
+                .query_row(
+                    &format!("SELECT {} FROM videos WHERE normalized_source_key=?1 AND library_available_at IS NOT NULL AND deleted_at IS NULL", VIDEO_COLUMNS),
+                    [&key],
+                    row_video,
+                )
+                .optional()?;
+            Ok(VideoSourceLookup {
+                platform: source.platform.clone(),
+                source_url: source.source_url.clone(),
+                video: video
+                    .map(|record| hydrate_video(db, task_root, record))
+                    .transpose()?,
+            })
+        })
+        .collect()
 }
 pub fn list_queue(db: &Connection) -> rusqlite::Result<Vec<QueueItem>> {
     let mut s=db.prepare("SELECT q.id,q.video_id,q.position,q.state,q.stage,q.progress,q.phase_completed,q.phase_total,q.phase_unit,q.attempt_count,q.asr_backend,q.asr_config_json,q.error_code,q.error_message,q.created_at,q.started_at,q.updated_at,q.finished_at,q.status_message FROM queue_items q WHERE q.state NOT IN ('cancelled') ORDER BY q.position,q.created_at")?;
@@ -1135,11 +1259,11 @@ pub fn mark_translation(
         .iter_mut()
         .find(|s| s.id == segment_id)
         .ok_or("找不到该转录段")?;
-    segment.translated_text = Some(text.to_string());
+    segment.translated_text = Some(translation::clean_milmmt_translation_output(text));
     asr::save_transcript(task_dir, video_id, &transcript).map_err(|e| e.to_string())?;
     let dir = task_dir.join("tasks").join(video_id).join("translation");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let data = serde_json::json!({"videoId":video_id,"sourceRevision":transcript_hash(&transcript),"segments":transcript.segments.iter().filter_map(|s|s.translated_text.as_ref().map(|t|serde_json::json!({"id":s.id,"text":t}))).collect::<Vec<_>>()});
+    let data = serde_json::json!({"videoId":video_id,"sourceRevision":transcript_hash(&transcript),"segments":transcript.segments.iter().filter_map(|s|s.translated_text.as_ref().map(|t|serde_json::json!({"id":s.id,"text":translation::clean_milmmt_translation_output(t)}))).collect::<Vec<_>>()});
     fs::write(
         dir.join("translation.json"),
         serde_json::to_vec_pretty(&data).map_err(|e| e.to_string())?,
@@ -1151,7 +1275,7 @@ pub fn write_translation_artifact(task_dir: &Path, video_id: &str) -> Result<(),
     let transcript = asr::load_transcript(task_dir, video_id).map_err(|e| e.to_string())?;
     let dir = task_dir.join("tasks").join(video_id).join("translation");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let data = serde_json::json!({"videoId":video_id,"sourceRevision":transcript_hash(&transcript),"segments":transcript.segments.iter().filter_map(|s|s.translated_text.as_ref().map(|t|serde_json::json!({"id":s.id,"text":t}))).collect::<Vec<_>>()});
+    let data = serde_json::json!({"videoId":video_id,"sourceRevision":transcript_hash(&transcript),"segments":transcript.segments.iter().filter_map(|s|s.translated_text.as_ref().map(|t|serde_json::json!({"id":s.id,"text":translation::clean_milmmt_translation_output(t)}))).collect::<Vec<_>>()});
     fs::write(
         dir.join("translation.json"),
         serde_json::to_vec_pretty(&data).map_err(|e| e.to_string())?,
@@ -1367,9 +1491,9 @@ mod tests {
             )
             .unwrap();
         assert!(available.is_some());
-        let videos = list_videos(&db, temp.path()).unwrap();
-        assert_eq!(videos[0].media_status, "missing");
-        assert_eq!(videos[0].transcript_status, "ready");
+        let page = list_videos_page(&db, temp.path(), None, None, None, None).unwrap();
+        assert_eq!(page.items[0].media_status, "missing");
+        assert_eq!(page.items[0].transcript_status, "ready");
     }
 
     #[test]
@@ -1494,6 +1618,156 @@ mod tests {
                 .asr_backend
                 .as_deref(),
             Some("openasr-moss-q4")
+        );
+    }
+
+    fn seed_library_videos(db: &Connection, count: usize) -> Vec<String> {
+        let inputs = (0..count)
+            .map(|index| EnqueueInput {
+                title: format!("Library video {index}"),
+                platform: if index % 2 == 0 {
+                    "bilibili".into()
+                } else {
+                    "douyin".into()
+                },
+                duration: "1:00".into(),
+                source_url: format!("https://example.com/library/{index}"),
+                author: Some(format!("Author {index}")),
+                thumbnail_url: None,
+                asr_backend: None,
+                asr_config_json: None,
+            })
+            .collect::<Vec<_>>();
+        let rows = enqueue(db, inputs).unwrap();
+        for (index, row) in rows.iter().enumerate() {
+            db.execute(
+                "UPDATE videos SET library_available_at='ready',updated_at=?1 WHERE id=?2",
+                params![format!("{index:04}"), row.video.id],
+            )
+            .unwrap();
+        }
+        rows.into_iter().map(|row| row.video.id).collect()
+    }
+
+    #[test]
+    fn video_page_reports_total_and_respects_page_boundaries() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Connection::open_in_memory().unwrap();
+        initialize_database(&db, temp.path()).unwrap();
+        let index_sql: String = db
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name='videos_library_order'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(index_sql.contains("WHERE library_available_at IS NOT NULL"));
+        seed_library_videos(&db, 5);
+
+        let first = list_videos_page(&db, temp.path(), None, None, Some(1), Some(2)).unwrap();
+        assert_eq!(first.total, 5);
+        assert_eq!(first.page, 1);
+        assert_eq!(first.page_size, 2);
+        assert_eq!(first.items.len(), 2);
+        assert_eq!(first.items[0].title, "Library video 4");
+
+        let last = list_videos_page(&db, temp.path(), None, None, Some(3), Some(2)).unwrap();
+        assert_eq!(last.items.len(), 1);
+        let beyond = list_videos_page(&db, temp.path(), None, None, Some(4), Some(2)).unwrap();
+        assert!(beyond.items.is_empty());
+        assert_eq!(beyond.total, 5);
+        let normalized = list_videos_page(&db, temp.path(), None, None, Some(0), Some(500)).unwrap();
+        assert_eq!(normalized.page, 1);
+        assert_eq!(normalized.page_size, 100);
+    }
+
+    #[test]
+    fn video_page_searches_title_author_and_source_and_filters_platform() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Connection::open_in_memory().unwrap();
+        initialize_database(&db, temp.path()).unwrap();
+        seed_library_videos(&db, 4);
+
+        let title = list_videos_page(&db, temp.path(), Some("video 2"), None, None, None).unwrap();
+        assert_eq!(title.total, 1);
+        let author = list_videos_page(&db, temp.path(), Some("AUTHOR 3"), None, None, None).unwrap();
+        assert_eq!(author.total, 1);
+        let source = list_videos_page(&db, temp.path(), Some("library/1"), None, None, None).unwrap();
+        assert_eq!(source.total, 1);
+        let platform = list_videos_page(&db, temp.path(), None, Some("DOUYIN"), None, None).unwrap();
+        assert_eq!(platform.total, 2);
+        assert!(platform.items.iter().all(|video| video.platform == "douyin"));
+    }
+
+    #[test]
+    fn source_lookup_matches_only_library_videos_and_preserves_input_order() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Connection::open_in_memory().unwrap();
+        initialize_database(&db, temp.path()).unwrap();
+        seed_library_videos(&db, 2);
+        let sources = vec![
+            VideoSourceLookupInput {
+                platform: "bilibili".into(),
+                source_url: "https://example.com/library/0?from=search".into(),
+            },
+            VideoSourceLookupInput {
+                platform: "bilibili".into(),
+                source_url: "https://example.com/not-in-library".into(),
+            },
+        ];
+        let found = lookup_videos_by_sources(&db, temp.path(), &sources).unwrap();
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].source_url, sources[0].source_url);
+        assert_eq!(found[0].video.as_ref().unwrap().title, "Library video 0");
+        assert!(found[1].video.is_none());
+    }
+
+    #[test]
+    fn source_lookup_rejects_more_than_one_hundred_items() {
+        let db = Connection::open_in_memory().unwrap();
+        initialize_database(&db, Path::new(".")).unwrap();
+        let sources = (0..101)
+            .map(|index| VideoSourceLookupInput {
+                platform: "bilibili".into(),
+                source_url: format!("https://example.com/{index}"),
+            })
+            .collect::<Vec<_>>();
+        assert!(lookup_videos_by_sources(&db, Path::new("."), &sources).is_err());
+    }
+
+    #[test]
+    fn get_video_is_limited_to_library_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Connection::open_in_memory().unwrap();
+        initialize_database(&db, temp.path()).unwrap();
+        let queued = enqueue(
+            &db,
+            vec![EnqueueInput {
+                title: "Not yet in library".into(),
+                platform: "bilibili".into(),
+                duration: "1:00".into(),
+                source_url: "https://example.com/queued".into(),
+                author: None,
+                thumbnail_url: None,
+                asr_backend: None,
+                asr_config_json: None,
+            }],
+        )
+        .unwrap();
+        assert!(get_video(&db, temp.path(), &queued[0].video.id)
+            .unwrap()
+            .is_none());
+        db.execute(
+            "UPDATE videos SET library_available_at='ready' WHERE id=?1",
+            [&queued[0].video.id],
+        )
+        .unwrap();
+        assert_eq!(
+            get_video(&db, temp.path(), &queued[0].video.id)
+                .unwrap()
+                .unwrap()
+                .title,
+            "Not yet in library"
         );
     }
 }

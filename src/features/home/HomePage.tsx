@@ -1,11 +1,12 @@
 import { Clipboard, Link2, LoaderCircle, ListChecks, Library } from "lucide-react";
 import { useState } from "react";
+import { VideoThumbnail } from "../../components/VideoThumbnail";
 import type { QueueItem, SourcePreview, Video } from "../../types";
 import { runtime } from "../../lib/runtime";
 
-interface HomePageProps { queueItems: QueueItem[]; videos: Video[]; onEnqueue: (source: SourcePreview) => Promise<void>; onOpenQueue: () => void; onOpenLibrary: () => void; onOpenVideo: (video: Video) => void; }
+interface HomePageProps { queueItems: QueueItem[]; videos: Video[]; videoCount: number; onEnqueue: (source: SourcePreview) => Promise<void>; onOpenQueue: () => void; onOpenLibrary: () => void; onOpenVideo: (video: Video) => void; }
 
-export function HomePage({ queueItems, videos, onEnqueue, onOpenQueue, onOpenLibrary, onOpenVideo }: HomePageProps) {
+export function HomePage({ queueItems, videos, videoCount, onEnqueue, onOpenQueue, onOpenLibrary, onOpenVideo }: HomePageProps) {
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
   const [isParsing, setIsParsing] = useState(false);
@@ -27,10 +28,10 @@ export function HomePage({ queueItems, videos, onEnqueue, onOpenQueue, onOpenLib
     </div>
     <section className="home-summary-grid" aria-label="内容概览">
       <button className="home-summary-card" type="button" onClick={onOpenQueue}><span className="home-summary-icon"><ListChecks size={19} /></span><span><strong>{queueItems.filter((item) => ["queued", "running", "paused", "blocked", "failed"].includes(item.state)).length}</strong><small>队列中的视频</small></span><span className="home-summary-link">查看队列 →</span></button>
-      <button className="home-summary-card" type="button" onClick={onOpenLibrary}><span className="home-summary-icon"><Library size={19} /></span><span><strong>{videos.length}</strong><small>视频库内容</small></span><span className="home-summary-link">打开视频库 →</span></button>
+      <button className="home-summary-card" type="button" onClick={onOpenLibrary}><span className="home-summary-icon"><Library size={19} /></span><span><strong>{videoCount}</strong><small>视频库内容</small></span><span className="home-summary-link">打开视频库 →</span></button>
     </section>
-    <section className="recent-section"><div className="section-heading-row"><h2>最近进入视频库</h2>{videos.length > 0 ? <button className="view-all-link" type="button" onClick={onOpenLibrary}>查看全部 ({videos.length}) →</button> : null}</div>
-      {videos.length > 0 ? <div className="library-card-list">{videos.slice(0, 5).map((video) => <button className="library-card" type="button" key={video.id} onClick={() => onOpenVideo(video)}><span className="library-card-thumb">{video.thumbnailUrl ? <img src={video.thumbnailUrl} alt="" /> : <Library size={20} />}</span><span className="library-card-copy"><strong>{video.title}</strong><small>{video.platform} · {video.duration}</small></span></button>)}</div> : <div className="home-empty-state"><Library size={24} /><p>完成转录的视频会出现在这里</p></div>}
+    <section className="recent-section"><div className="section-heading-row"><h2>最近进入视频库</h2>{videoCount > 0 ? <button className="view-all-link" type="button" onClick={onOpenLibrary}>查看全部 ({videoCount}) →</button> : null}</div>
+      {videos.length > 0 ? <div className="library-card-list">{videos.slice(0, 4).map((video) => <button className="library-card" type="button" key={video.id} onClick={() => onOpenVideo(video)}><VideoThumbnail className="library-card-thumb" src={video.thumbnailUrl} /><span className="library-card-copy"><strong title={video.title}>{video.title}</strong><small>{video.platform} · {video.duration}</small></span></button>)}</div> : <div className="home-empty-state"><Library size={24} /><p>完成转录的视频会出现在这里</p></div>}
     </section>
   </section>;
 }

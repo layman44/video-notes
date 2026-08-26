@@ -2,6 +2,7 @@ use crate::{
     media::{self, MediaPreparationResult},
     native_manager::{self, NativeInstallEvent, NativeModelRequest},
     transcriber::{self, AsrConfig, StartTranscriptionRequest, TranscriptionEvent},
+    translation,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -329,6 +330,12 @@ pub fn load_transcript(task_data_dir: &Path, job_id: &str) -> Result<TranscriptR
         if transcript.job_id.is_empty() {
             transcript.job_id = job_id.to_string();
         }
+        // Older tasks may already contain model role prefixes. Normalize at the
+        // backend read boundary so every consumer gets clean text, and best-effort
+        // persist the repair so notes/artifacts do not keep the stale value.
+        if normalize_translation_fields(&mut transcript) {
+            let _ = save_transcript(task_data_dir, job_id, &transcript);
+        }
         return Ok(transcript);
     }
 
@@ -421,17 +428,34 @@ pub fn save_transcript(
     transcript: &TranscriptResult,
 ) -> Result<(), String> {
     media::validate_job_id(job_id)?;
+    let mut normalized = transcript.clone();
+    normalize_translation_fields(&mut normalized);
     let dir = task_data_dir.join("tasks").join(job_id).join("transcript");
     fs::create_dir_all(&dir).map_err(|error| format!("无法创建转录目录：{error}"))?;
     let json_path = dir.join("transcript.json");
-    let serialized = serde_json::to_string_pretty(transcript)
+    let serialized = serde_json::to_string_pretty(&normalized)
         .map_err(|error| format!("转录结果序列化失败：{error}"))?;
     fs::write(&json_path, serialized)
         .map_err(|error| format!("无法保存转录 JSON：{error}"))?;
     let txt_path = dir.join("transcript.txt");
-    fs::write(&txt_path, &transcript.text)
+    fs::write(&txt_path, &normalized.text)
         .map_err(|error| format!("无法保存转录文本：{error}"))?;
     Ok(())
+}
+
+fn normalize_translation_fields(transcript: &mut TranscriptResult) -> bool {
+    let mut changed = false;
+    for segment in &mut transcript.segments {
+        let Some(value) = segment.translated_text.as_mut() else {
+            continue;
+        };
+        let clean = translation::clean_milmmt_translation_output(value);
+        if *value != clean {
+            *value = clean;
+            changed = true;
+        }
+    }
+    changed
 }
 
 pub async fn transcribe_job(
@@ -1192,5 +1216,57 @@ fn apply_standard_view_script_preference(transcript: &mut TranscriptResult) {
     transcript.text = simplify_chinese_text(&transcript.text);
     for segment in &mut transcript.segments {
         segment.text = simplify_chinese_text(&segment.text);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn transcript_with_translation(text: &str) -> TranscriptResult {
+        TranscriptResult {
+            job_id: "legacy-translation".into(),
+            model_id: "test".into(),
+            language: "en".into(),
+            translation_language: Some("zh".into()),
+            text: "Source text".into(),
+            segments: vec![TranscriptSegment {
+                id: "0".into(),
+                chunk_index: 0,
+                start: 0.0,
+                end: 1.0,
+                start_ms: 0,
+                end_ms: 1_000,
+                text: "Source text".into(),
+                translated_text: Some(text.into()),
+                avg_confidence: None,
+            }],
+            pause_repairs: None,
+        }
+    }
+
+    #[test]
+    fn load_repairs_legacy_translation_and_persists_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let job_id = "legacy-translation";
+        let dirty = transcript_with_translation("Assistant: 旧译文");
+        save_transcript(temp.path(), job_id, &dirty).unwrap();
+
+        // Simulate a legacy file written before role-prefix cleanup existed.
+        let path = temp
+            .path()
+            .join("tasks")
+            .join(job_id)
+            .join("transcript")
+            .join("transcript.json");
+        let mut legacy = dirty;
+        legacy.segments[0].translated_text = Some("<|assistant|>\nAssistant: 旧译文".into());
+        fs::write(&path, serde_json::to_string_pretty(&legacy).unwrap()).unwrap();
+
+        let loaded = load_transcript(temp.path(), job_id).unwrap();
+        assert_eq!(loaded.segments[0].translated_text.as_deref(), Some("旧译文"));
+        let persisted = fs::read_to_string(path).unwrap();
+        assert!(persisted.contains("\"translatedText\": \"旧译文\""));
+        assert!(!persisted.contains("Assistant:"));
     }
 }

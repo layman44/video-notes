@@ -274,6 +274,102 @@ pub fn translation_prompt_milmmt(
     ))
 }
 
+/// Remove role/template framing that some llama.cpp builds include around the
+/// generated translation. Only markers at the beginning (and known stop
+/// markers at the end) are removed; a normal `Assistant:` in the body is
+/// deliberately left untouched.
+pub fn clean_milmmt_translation_output(raw_output: &str) -> String {
+    let mut text = raw_output.trim();
+
+    // A model can echo more than one nested role/template marker. Every
+    // successful branch consumes input, so this loop always makes progress.
+    loop {
+        let before = text;
+        text = text.trim_start();
+
+        if let Some(rest) = strip_prefix_ascii_ci(text, "<|assistant|>") {
+            text = rest;
+        } else if let Some(rest) = strip_prefix_ascii_ci(text, "<|im_start|>") {
+            text = strip_template_role(rest);
+        } else if let Some(rest) = strip_prefix_ascii_ci(text, "<|start_header_id|>") {
+            text = strip_template_role(rest);
+        } else if let Some(rest) = strip_prefix_ascii_ci(text, "<|end_header_id|>") {
+            text = rest;
+        } else if let Some(rest) = strip_prefix_ascii_ci(text, "###") {
+            // Common markdown chat template: `### Assistant:`.
+            let candidate = rest.trim_start();
+            if let Some(clean) = strip_assistant_prefix(candidate) {
+                text = clean;
+            } else {
+                break;
+            }
+        } else if let Some(rest) = strip_assistant_prefix(text) {
+            text = rest;
+        } else if let Some(rest) = strip_prefix_ascii_ci(text, "Chinese (Simplified):") {
+            text = rest;
+        } else {
+            break;
+        }
+
+        if text == before {
+            break;
+        }
+    }
+
+    // Do not strip arbitrary angle-bracket text. These are the termination
+    // tokens emitted by the supported chat templates, and only at the end.
+    loop {
+        let trimmed = text.trim_end();
+        let Some(rest) = ["<|eot_id|>", "<|end|>", "<|im_end|>", "</s>"]
+            .iter()
+            .find_map(|token| strip_suffix_ascii_ci(trimmed, token))
+        else {
+            text = trimmed;
+            break;
+        };
+        text = rest.trim_end();
+    }
+
+    text.trim_matches('`')
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn strip_prefix_ascii_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    text.get(..prefix.len())
+        .filter(|value| value.eq_ignore_ascii_case(prefix))
+        .map(|_| &text[prefix.len()..])
+}
+
+fn strip_suffix_ascii_ci<'a>(text: &'a str, suffix: &str) -> Option<&'a str> {
+    let start = text.len().checked_sub(suffix.len())?;
+    text.get(start..)
+        .filter(|value| value.eq_ignore_ascii_case(suffix))
+        .map(|_| &text[..start])
+}
+
+fn strip_assistant_prefix(text: &str) -> Option<&str> {
+    let rest = strip_prefix_ascii_ci(text.trim_start(), "assistant")?;
+    let rest = rest.trim_start_matches([' ', '\t', '\r', '\n']);
+    let rest = rest.strip_prefix(':').or_else(|| rest.strip_prefix('：'))?;
+    Some(rest)
+}
+
+fn strip_template_role(text: &str) -> &str {
+    let trimmed = text.trim_start();
+    let Some(rest) = strip_prefix_ascii_ci(trimmed, "assistant") else {
+        return trimmed;
+    };
+    let rest = rest.trim_start_matches([' ', '\t', '\r', '\n']);
+    strip_prefix_ascii_ci(rest, "<|end_header_id|>").unwrap_or(rest)
+}
+
 fn clean_prompt_text(text: &str) -> String {
     text.replace(|c: char| c == '\r' || c == '\n', " ").split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -319,5 +415,47 @@ mod tests {
         );
         assert!(!prompt.contains("SEG:"));
         assert!(!prompt.contains("CONTEXT"));
+    }
+
+    #[test]
+    fn cleans_assistant_prefix_and_optional_whitespace() {
+        assert_eq!(
+            clean_milmmt_translation_output("Assistant: 我是个丑陋的鸭子。"),
+            "我是个丑陋的鸭子。"
+        );
+        assert_eq!(
+            clean_milmmt_translation_output("assistant\n:\n我是个丑陋的鸭子。"),
+            "我是个丑陋的鸭子。"
+        );
+    }
+
+    #[test]
+    fn cleans_nested_chat_template_markers_and_is_idempotent() {
+        let raw = "<|im_start|>assistant\n<|assistant|> Chinese (Simplified):\n我是个丑陋的鸭子。<|im_end|>";
+        let clean = clean_milmmt_translation_output(raw);
+        assert_eq!(clean, "我是个丑陋的鸭子。");
+        assert_eq!(clean_milmmt_translation_output(&clean), clean);
+        assert_eq!(
+            clean_milmmt_translation_output("<|start_header_id|>assistant<|end_header_id|>\n你好。<|eot_id|>"),
+            "你好。"
+        );
+    }
+
+    #[test]
+    fn preserves_assistant_text_in_the_body() {
+        let raw = "他说：Assistant: 这不是角色前缀。";
+        assert_eq!(clean_milmmt_translation_output(raw), raw);
+        assert_eq!(clean_milmmt_translation_output("assistant body"), "assistant body");
+        assert_eq!(clean_milmmt_translation_output("### 正文标题"), "### 正文标题");
+    }
+
+    #[test]
+    fn cleans_target_label_only_at_the_beginning() {
+        assert_eq!(
+            clean_milmmt_translation_output("Chinese (Simplified): 她冲到外面呼救。"),
+            "她冲到外面呼救。"
+        );
+        let body = "译文提到 Chinese (Simplified): 作为正文。";
+        assert_eq!(clean_milmmt_translation_output(body), body);
     }
 }

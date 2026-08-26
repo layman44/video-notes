@@ -10,6 +10,8 @@ export type QueueStage = "download" | "normalize" | "transcribe";
 export type ArtifactState = "unknown" | "missing" | "ready" | "processing" | "stale" | "failed";
 export interface QueueItem { id: string; videoId: string; title: string; platform: Platform | string; duration: string; sourceUrl: string; author?: string; thumbnailUrl?: string | null; position: number; state: QueueState; stage?: QueueStage | null; progress?: number | null; progressCompleted?: number | null; progressTotal?: number | null; progressUnit?: string | null; attemptCount: number; statusMessage?: string | null; errorCode?: string | null; errorMessage?: string | null; createdAt?: string | null; updatedAt?: string | null; }
 export interface Video { id: string; title: string; platform: Platform | string; duration: string; sourceUrl: string; author?: string; thumbnailUrl?: string | null; updatedAt?: string | null; createdAt?: string | null; transcriptStatus: ArtifactState; translationStatus: ArtifactState; noteStatus: ArtifactState; mediaStatus: "unknown" | "available" | "missing" | "deleted"; transcriptLanguage?: string | null; queueItemId?: string | null; }
+export interface VideoPage { items: Video[]; total: number; page: number; pageSize: number; }
+export interface VideoSourceLookup { platform: Platform | string; sourceUrl: string; video?: Video | null; }
 export interface EnqueueSourceInput { title: string; platform: Platform | string; duration: string; sourceUrl: string; author?: string; thumbnailUrl?: string | null; asrBackend?: AsrBackend; asrConfigJson?: string; }
 export interface AppError { code: string; message: string; details?: string; }
 export interface SourcePreview extends EnqueueSourceInput {}

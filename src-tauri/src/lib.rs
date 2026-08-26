@@ -632,10 +632,45 @@ async fn export_markdown(
 // front-end orchestration entry points.
 
 #[tauri::command]
-fn list_videos(state: State<'_, AppState>) -> Result<Vec<workflow::VideoRecord>, String> {
+fn list_videos_page(
+    query: Option<String>,
+    platform: Option<String>,
+    page: Option<u32>,
+    page_size: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<workflow::VideoPage, String> {
     let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
     let root = current_task_data_directory(&state)?;
-    workflow::list_videos(&db, &root).map_err(|e| e.to_string())
+    workflow::list_videos_page(
+        &db,
+        &root,
+        query.as_deref(),
+        platform.as_deref(),
+        page,
+        page_size,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_video(
+    video_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<workflow::VideoRecord>, String> {
+    media::validate_job_id(&video_id)?;
+    let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    let root = current_task_data_directory(&state)?;
+    workflow::get_video(&db, &root, &video_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn lookup_videos_by_sources(
+    sources: Vec<workflow::VideoSourceLookupInput>,
+    state: State<'_, AppState>,
+) -> Result<Vec<workflow::VideoSourceLookup>, String> {
+    let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    let root = current_task_data_directory(&state)?;
+    workflow::lookup_videos_by_sources(&db, &root, &sources).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -789,7 +824,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            list_videos,
+            list_videos_page,
+            get_video,
+            lookup_videos_by_sources,
             list_queue_items,
             enqueue_sources,
             pause_queue_item,

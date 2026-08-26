@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { modelKindFromId, type AppError, type AsrBackend, type AsrModelStatus, type DataDirectorySettings, type EnqueueSourceInput, type MediaPreparationResult, type MediaToolsStatus, type ModelDownloadProgress, type NoteResult, type QueueItem, type SearchResultResponse, type SourcePreview, type SummaryModelStatus, type SummaryProgress, type TranscriptResult, type TranslationModelStatus, type TranslationProgress, type Video } from "../types";
+import { modelKindFromId, type AppError, type AsrBackend, type AsrModelStatus, type DataDirectorySettings, type EnqueueSourceInput, type MediaPreparationResult, type MediaToolsStatus, type ModelDownloadProgress, type NoteResult, type QueueItem, type SearchResultResponse, type SourcePreview, type SummaryModelStatus, type SummaryProgress, type TranscriptResult, type TranslationModelStatus, type TranslationProgress, type Video, type VideoPage, type VideoSourceLookup } from "../types";
 
 export function normalizeAppError(error: unknown): AppError {
   if (typeof error === "object" && error !== null) {
@@ -18,7 +18,9 @@ const unavailable = <T,>(message: string): Promise<T> => Promise.reject(new Erro
 
 export const runtime = {
   isDesktop: isTauri,
-  async listVideos(): Promise<Video[]> { return isTauri() ? invoke<Video[]>("list_videos") : []; },
+  async listVideosPage(request: { query?: string; platform?: string; page?: number; pageSize?: number } = {}): Promise<VideoPage> { return isTauri() ? invoke<VideoPage>("list_videos_page", request) : { items: [], total: 0, page: request.page || 1, pageSize: request.pageSize || 20 }; },
+  async getVideo(videoId: string): Promise<Video | null> { return isTauri() ? invoke<Video | null>("get_video", { videoId }) : null; },
+  async lookupVideosBySources(sources: Array<{ platform: string; sourceUrl: string }>): Promise<VideoSourceLookup[]> { return isTauri() ? invoke<VideoSourceLookup[]>("lookup_videos_by_sources", { sources }) : []; },
   async listQueueItems(): Promise<QueueItem[]> { return isTauri() ? invoke<QueueItem[]>("list_queue_items") : []; },
   async enqueueSources(inputs: EnqueueSourceInput[]): Promise<void> { if (!isTauri()) return unavailable("队列只能在桌面应用中运行"); await invoke("enqueue_sources", { inputs }); },
   async requeueVideo(videoId: string, asrBackend: AsrBackend, asrConfigJson: string): Promise<void> { if (isTauri()) await invoke("requeue_video", { videoId, asrBackend, asrConfigJson }); },

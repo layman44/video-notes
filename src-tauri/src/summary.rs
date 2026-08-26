@@ -483,22 +483,7 @@ fn pending_translation_indices(segments: &[TranscriptSegment]) -> Vec<usize> {
 }
 
 fn clean_milmmt_translation_output(raw_output: &str) -> String {
-    let mut text = raw_output.trim();
-    // Normally --no-display-prompt makes the file contain generation only. Keep this
-    // small compatibility strip in case a llama.cpp build echoes the target label.
-    if let Some((_, tail)) = text.rsplit_once("Chinese (Simplified):") {
-        if !tail.trim().is_empty() {
-            text = tail.trim();
-        }
-    }
-    let text = text
-        .trim_matches('`')
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    translation::clean_milmmt_translation_output(raw_output)
 }
 
 fn translation_segment_meta(
