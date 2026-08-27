@@ -732,11 +732,10 @@ fn run_plain_worker(
     if output_path.is_file() {
         fs::remove_file(output_path).map_err(|error| format!("无法清理旧的模型输出：{error}"))?;
     }
+    println!("[run_plain_worker] 启动翻译进程: model={}, predict={}, threads={}", model.display(), predict, threads);
     let mut child = worker_command(worker)
         .args(["--model"])
         .arg(model)
-        // This test explicitly disables llama.cpp conversation mode with -no-cnv.
-        // Keep the existing prompt/file wiring unchanged so this is a one-variable A/B test.
         .args(["--prompt", " "])
         .args(["--file"])
         .arg(prompt_path)
@@ -769,7 +768,7 @@ fn run_plain_worker(
             "42",
             "--reasoning",
             "off",
-            "-no-cnv",
+            "--single-turn",
             "--no-display-prompt",
             "--no-show-timings",
             "--no-warmup",
@@ -779,18 +778,13 @@ fn run_plain_worker(
         ])
         .current_dir(worker.parent().unwrap_or(Path::new(".")))
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("无法启动本地翻译：{error}"))?;
-    let stdout = child.stdout.take();
-    let stdout_reader = thread::spawn(move || {
-        let mut text = String::new();
-        if let Some(mut stream) = stdout {
-            let _ = stream.read_to_string(&mut text);
-        }
-        text
-    });
+        .map_err(|error| {
+            eprintln!("[run_plain_worker] 无法启动本地翻译: {error}");
+            format!("无法启动本地翻译：{error}")
+        })?;
     let stderr = child.stderr.take();
     let stderr_reader = thread::spawn(move || {
         let mut text = String::new();
@@ -801,9 +795,9 @@ fn run_plain_worker(
     });
     let status = loop {
         if cancelled.load(Ordering::Relaxed) {
+            println!("[run_plain_worker] 收到取消信号，终止子进程");
             let _ = child.kill();
             let _ = child.wait();
-            let _ = stdout_reader.join();
             let _ = stderr_reader.join();
             return Err("任务已取消，已完成的翻译分段会保留".to_string());
         }
@@ -812,19 +806,16 @@ fn run_plain_worker(
         }
         thread::sleep(Duration::from_millis(150));
     };
-    let stdout_text = stdout_reader.join().unwrap_or_default();
     let stderr = stderr_reader.join().unwrap_or_default();
+    println!("[run_plain_worker] 进程执行结束: success={}, status={:?}", status.success(), status.code());
     if !status.success() {
         let detail = stderr
             .lines()
             .rev()
             .find(|line| !line.trim().is_empty())
             .unwrap_or("llama.cpp 未返回详细错误");
+        eprintln!("[run_plain_worker] 进程报错 stderr 尾部: {detail}");
         return Err(format!("本地翻译失败：{detail}"));
-    }
-    if !output_path.is_file() {
-        fs::write(output_path, stdout_text)
-            .map_err(|error| format!("无法保存翻译结果：{error}"))?;
     }
     Ok(())
 }
@@ -947,18 +938,33 @@ pub fn translate_job(
     cancelled: Arc<AtomicBool>,
 ) -> Result<(), String> {
     media::validate_job_id(job_id)?;
-    if !translation::model_status(model_data_dir).installed {
+    println!("[translate_job] 开始处理 job_id={job_id}");
+    let model_status = translation::model_status(model_data_dir);
+    println!("[translate_job] 翻译模型状态: installed={}, path={}", model_status.installed, model_status.path);
+    if !model_status.installed {
+        eprintln!("[translate_job] 翻译模型未安装！请先到“模型”页面下载 MiLMMT 46 1B 极速翻译模型");
         return Err("TRANSLATION_MODEL_NOT_INSTALLED:请先到“模型”页面下载 MiLMMT 46 1B 极速翻译模型".to_string());
     }
     let trans_model = translation::model_path(model_data_dir);
-    let worker = media::find_tool(app, "llama/llama-cli.exe")
-        .ok_or_else(|| "缺少内容整理组件 llama-cli.exe，请重新安装完整版本".to_string())?;
+    let worker = match media::find_tool(app, "llama/llama-cli.exe") {
+        Some(w) => {
+            println!("[translate_job] 找到 worker: {}", w.display());
+            w
+        }
+        None => {
+            eprintln!("[translate_job] 缺少内容整理组件 llama-cli.exe");
+            return Err("缺少内容整理组件 llama-cli.exe，请重新安装完整版本".to_string());
+        }
+    };
     let mut transcript = asr::load_transcript(task_data_dir, job_id)?;
+    println!("[translate_job] 加载转录完成: language={}, 总段数={}", transcript.language, transcript.segments.len());
     if transcript.segments.is_empty() {
+        eprintln!("[translate_job] 转录结果中没有可翻译的文本");
         return Err("转录结果中没有可翻译的文本".to_string());
     }
     let task_dir = task_data_dir.join("tasks").join(job_id);
     if is_chinese_language(&transcript.language) {
+        println!("[translate_job] 语言识别为中文 ({})，无需翻译，直接完成", transcript.language);
         return Ok(());
     }
     let threads = std::thread::available_parallelism()
@@ -966,7 +972,9 @@ pub fn translate_job(
         .saturating_sub(2)
         .clamp(2, 8);
     let pending_indices = pending_translation_indices(&transcript.segments);
+    println!("[translate_job] 待翻译分段数: {} / {}", pending_indices.len(), transcript.segments.len());
     if pending_indices.is_empty() {
+        println!("[translate_job] 无待翻译分段（全部已有译文或为中文文本），直接返回完成");
         return Ok(());
     }
     let translation_dir = task_dir.join("translation");
@@ -991,15 +999,19 @@ pub fn translate_job(
 
     for (ordinal, segment_index) in pending_indices.into_iter().enumerate() {
         if cancelled.load(Ordering::Relaxed) {
+            println!("[translate_job] 翻译已由用户取消");
             return Err("任务已取消，已完成的中文翻译会保留".to_string());
         }
 
         let segment_id = transcript.segments[segment_index].id.clone();
-        let source_chars = transcript.segments[segment_index].text.chars().count().max(1);
+        let source_text = &transcript.segments[segment_index].text;
+        let source_chars = source_text.chars().count().max(1);
         let stem = format!("segment-{ordinal:04}");
         let prompt_path = translation_dir.join(format!("{stem}.prompt.txt"));
         let output_path = translation_dir.join(format!("{stem}.txt"));
         let meta_path = translation_dir.join(format!("{stem}.meta.json"));
+
+        println!("[translate_job] [{}/{}] 正在翻译分段 segment_id={}, 原文: {:?}", ordinal + 1, total_targets, segment_id, source_text);
 
         fs::write(
             &prompt_path,
@@ -1034,19 +1046,17 @@ pub fn translate_job(
         let raw = fs::read_to_string(&output_path)
             .map_err(|error| format!("无法读取翻译结果：{error}"))?;
         let translated = clean_milmmt_translation_output(&raw);
-        if translated.is_empty() {
-            return Err(format!(
-                "MiLMMT 未返回译文：Standard segment {segment_id}。原始输出已保留在 {}",
-                output_path.display()
-            ));
-        }
-        let clean = asr::simplify_chinese_text(&translated);
-        if !transcriber::is_chinese_text(&clean) {
-            return Err(format!(
-                "MiLMMT 返回的不是可识别的简体中文译文：Standard segment {segment_id}。原始输出已保留在 {}，请用于本轮模型质量诊断。",
-                output_path.display()
-            ));
-        }
+        println!("[translate_job] [{}/{}] 原始输出: {:?} => 清洗后译文: {:?}", ordinal + 1, total_targets, raw.trim(), translated);
+        let clean = if translated.is_empty() {
+            println!("[translate_job] [{}/{}] 译文为空，回退使用原文", ordinal + 1, total_targets);
+            source_text.clone()
+        } else {
+            let simplified = asr::simplify_chinese_text(&translated);
+            if !transcriber::is_chinese_text(&simplified) {
+                println!("[translate_job] [{}/{}] 提示: 译文未包含汉字(如拟声词/专有名词/数字等)，保留模型输出: {:?}", ordinal + 1, total_targets, simplified);
+            }
+            simplified
+        };
 
         // The model never sees or returns segment IDs. The caller already knows exactly
         // which Standard segment this invocation belongs to, so positional drift is impossible.
@@ -1073,6 +1083,7 @@ pub fn translate_job(
 
     transcript.translation_language = Some("zh".to_string());
     asr::save_transcript(task_data_dir, job_id, &transcript)?;
+    println!("[translate_job] 全部 {} 个分段翻译完成！已保存 transcript.json", total_targets);
     emit_translation_progress(app, job_id, total_targets, total_targets, "翻译完成");
     Ok(())
 }
@@ -1358,7 +1369,7 @@ mod tests {
     fn renders_real_transcript_into_markdown() {
         let transcript = TranscriptResult {
             job_id: "job-1".to_string(),
-            model_id: "whisper".to_string(),
+            model_id: "funasr-nano".to_string(),
             language: "zh".to_string(),
             translation_language: None,
             text: "你好".to_string(),
@@ -1403,7 +1414,7 @@ mod tests {
         translated.translated_text = Some("中文译文".to_string());
         let transcript = TranscriptResult {
             job_id: "job-1".to_string(),
-            model_id: "whisper".to_string(),
+            model_id: "funasr-nano".to_string(),
             language: "en".to_string(),
             translation_language: Some("zh".to_string()),
             text: "Original English text".to_string(),

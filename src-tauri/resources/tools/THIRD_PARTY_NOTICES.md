@@ -17,13 +17,6 @@ VideoNotes invokes these components as separate executables. They are not linked
 - Included license: `licenses/GPL-3.0.txt`
 - Build configuration and component versions: `licenses/FFmpeg-build-README.txt`
 
-## whisper.cpp
-
-- Project: https://github.com/ggml-org/whisper.cpp
-- Binary: official Windows x64 CPU release (`whisper/whisper-cli.exe` and its isolated runtime DLLs)
-- License: MIT
-- Included license: `licenses/whisper.cpp-LICENSE.txt`
-
 ## llama.cpp
 
 - Project: https://github.com/ggml-org/llama.cpp
@@ -38,4 +31,4 @@ VideoNotes invokes these components as separate executables. They are not linked
 - License: Apache-2.0
 - The MOSS q4 model is a separately downloaded Apache-2.0 model pack and is not bundled in the installer.
 
-The exact download URLs and SHA-256 values used for a local build are recorded in `media-tools.lock.json`, `whisper/whisper-worker.lock.json`, `llama/llama-worker.lock.json`, and `openasr-worker.lock.json`. Before publicly distributing an installer, complete the applicable GPL source-code and notice obligations for the exact FFmpeg build being shipped.
+The exact download URLs and SHA-256 values used for a local build are recorded in `media-tools.lock.json`, `llama/llama-worker.lock.json`, and `openasr-worker.lock.json`. Before publicly distributing an installer, complete the applicable GPL source-code and notice obligations for the exact FFmpeg build being shipped.

@@ -1,8 +1,8 @@
 import { listen } from "@tauri-apps/api/event";
 import { isTauri, normalizeAppError, runtime } from "./runtime";
-import { modelKindFromId, type AsrModelStatus, type ModelDownloadProgress, type ModelReadiness, type SummaryModelStatus, type TranslationModelStatus } from "../types";
+import { modelKindFromId, type AsrModelStatus, type EmbeddingModelStatus, type ModelDownloadProgress, type ModelReadiness, type SummaryModelStatus, type TranslationModelStatus } from "../types";
 
-export type ModelKind = "asr" | "moss" | "summary" | "translation";
+export type ModelKind = "asr" | "moss" | "summary" | "translation" | "embedding";
 
 export interface ModelDownloadState {
   downloadingKind: ModelKind | null;
@@ -13,6 +13,7 @@ export interface ModelDownloadState {
   mossModel: AsrModelStatus | null;
   summaryModel: SummaryModelStatus | null;
   translationModel: TranslationModelStatus | null;
+  embeddingModel: EmbeddingModelStatus | null;
 }
 
 type Listener = () => void;
@@ -20,17 +21,18 @@ type Listener = () => void;
 class ModelDownloadStore {
   private state: ModelDownloadState = {
     downloadingKind: null,
-    progress: { asr: 0, moss: 0, summary: 0, translation: 0 },
-    message: { asr: "", moss: "", summary: "", translation: "" },
-    error: { asr: "", moss: "", summary: "", translation: "" },
+    progress: { asr: 0, moss: 0, summary: 0, translation: 0, embedding: 0 },
+    message: { asr: "", moss: "", summary: "", translation: "", embedding: "" },
+    error: { asr: "", moss: "", summary: "", translation: "", embedding: "" },
     asrModel: null,
     mossModel: null,
     summaryModel: null,
     translationModel: null,
+    embeddingModel: null,
   };
 
   private listeners = new Set<Listener>();
-  private activeDownloadPromise: Record<ModelKind, Promise<unknown> | null> = { asr: null, moss: null, summary: null, translation: null };
+  private activeDownloadPromise: Record<ModelKind, Promise<unknown> | null> = { asr: null, moss: null, summary: null, translation: null, embedding: null };
   private initialized = false;
 
   constructor() {
@@ -83,26 +85,34 @@ class ModelDownloadStore {
 
   public async refresh(onStatusChange?: (readiness: ModelReadiness) => void) {
     try {
-      const [asr, moss, summary, translation] = await Promise.all([
+      const [asr, moss, summary, translation, embedding] = await Promise.all([
         runtime.inspectAsrModel(),
         runtime.inspectMossModel(),
         runtime.inspectSummaryModel(),
         runtime.inspectTranslationModel(),
+        runtime.inspectEmbeddingModel(),
       ]);
       this.update((draft) => {
         draft.asrModel = asr;
         draft.mossModel = moss;
         draft.summaryModel = summary;
         draft.translationModel = translation;
+        draft.embeddingModel = embedding;
       });
-      onStatusChange?.({ asr: asr.installed || moss.installed, summary: summary.installed, translation: translation.installed });
-      return { asr, moss, summary, translation };
+      onStatusChange?.({
+        asr: asr.installed || moss.installed,
+        summary: summary.installed,
+        translation: translation.installed,
+        embedding: embedding.installed,
+      });
+      return { asr, moss, summary, translation, embedding };
     } catch (reason) {
       const text = reason instanceof Error ? reason.message : String(reason);
       this.update((draft) => {
         draft.error.asr = text;
         draft.error.summary = text;
         draft.error.translation = text;
+        draft.error.embedding = text;
       });
     }
   }
@@ -112,6 +122,7 @@ class ModelDownloadStore {
       return this.activeDownloadPromise[kind];
     }
 
+    console.log("[modelDownloadStore] startDownload invoked for kind:", kind);
     this.update((draft) => {
       draft.downloadingKind = kind;
       draft.error[kind] = "";
@@ -120,6 +131,7 @@ class ModelDownloadStore {
     });
 
     const onProgress = (update: { progress: number; message: string }) => {
+      console.log(`[modelDownloadStore] progress event for ${kind}:`, update);
       this.update((draft) => {
         draft.progress[kind] = update.progress;
         draft.message[kind] = update.message;
@@ -128,17 +140,22 @@ class ModelDownloadStore {
 
     const task = (async () => {
       try {
+        console.log(`[modelDownloadStore] invoking runtime download for ${kind}...`);
         if (kind === "asr") {
           await runtime.downloadAsrModel(onProgress);
         } else if (kind === "moss") {
           await runtime.downloadMossModel(onProgress);
         } else if (kind === "translation") {
           await runtime.downloadTranslationModel(onProgress);
+        } else if (kind === "embedding") {
+          await runtime.downloadEmbeddingModel(onProgress);
         } else {
           await runtime.downloadSummaryModel(onProgress);
         }
+        console.log(`[modelDownloadStore] download completed for ${kind}, refreshing store...`);
         await this.refresh(onStatusChange);
       } catch (reason) {
+        console.error(`[modelDownloadStore] download failed for ${kind}:`, reason);
         const err = normalizeAppError(reason);
         if (err.code === "ALREADY_DOWNLOADING") {
           this.update((draft) => {
@@ -153,11 +170,11 @@ class ModelDownloadStore {
         }
       } finally {
         this.activeDownloadPromise[kind] = null;
-        if (this.state.downloadingKind === kind && this.state.progress[kind] >= 100) {
-          this.update((draft) => {
+        this.update((draft) => {
+          if (draft.downloadingKind === kind) {
             draft.downloadingKind = null;
-          });
-        }
+          }
+        });
       }
     })();
 
@@ -173,6 +190,7 @@ class ModelDownloadStore {
       if (kind === "asr") await runtime.deleteAsrModel();
       else if (kind === "moss") await runtime.deleteMossModel();
       else if (kind === "translation") await runtime.deleteTranslationModel();
+      else if (kind === "embedding") await runtime.deleteEmbeddingModel();
       else await runtime.deleteSummaryModel();
       await this.refresh(onStatusChange);
       this.update((draft) => {

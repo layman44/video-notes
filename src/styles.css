@@ -1717,6 +1717,24 @@ select:focus-visible,
 .workspace-pane-hint span:last-child { color: var(--muted); }
 .workspace-transcript-pane .detail-search { flex: 1; min-width: 0; }
 .workspace-transcript-pane .detail-search input { width: 100%; }
+.semantic-search-submit { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 32px; flex: 0 0 auto; padding: 0 12px; border: 1px solid rgba(29, 95, 242, .62); border-radius: 6px; background: var(--surface); color: var(--accent); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.semantic-search-submit:hover:not(:disabled) { background: rgba(29, 95, 242, .06); }
+.semantic-search-submit:disabled { cursor: not-allowed; opacity: .48; }
+.semantic-search-clear { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 11px; cursor: pointer; }
+.semantic-search-clear:hover { text-decoration: underline; }
+.semantic-search-error { margin: 0 0 9px; padding: 8px 10px; border: 1px solid rgba(190, 58, 58, .22); border-radius: 6px; background: rgba(190, 58, 58, .05); color: var(--danger); font-size: 11px; }
+.semantic-search-results { padding: 10px 0 18px; }
+.semantic-result-card { position: relative; padding: 14px 12px 14px 18px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background-color 160ms ease, box-shadow 160ms ease; }
+.semantic-result-card:hover { background: rgba(29, 95, 242, .035); }
+.semantic-result-card:focus-visible { outline: 2px solid rgba(29, 95, 242, .45); outline-offset: -2px; }
+.semantic-result-card.is-featured { margin-bottom: 8px; border: 1px solid rgba(29, 95, 242, .42); border-radius: 7px; background: rgba(29, 95, 242, .045); box-shadow: inset 4px 0 0 var(--accent); }
+.semantic-result-meta { display: flex; align-items: center; gap: 8px; min-height: 26px; }
+.semantic-result-time { padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-soft); font-size: 11px; font-variant-numeric: tabular-nums; }
+.semantic-result-badge { padding: 4px 7px; border-radius: 5px; background: rgba(29, 95, 242, .10); color: var(--accent); font-size: 11px; font-weight: 650; }
+.semantic-result-play { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; padding: 3px 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.semantic-result-play:hover { text-decoration: underline; }
+.semantic-result-card p { margin: 10px 0 0; color: var(--text-soft); font-size: 13px; line-height: 1.8; white-space: pre-wrap; }
+.semantic-result-card:not(.is-featured) p { margin-top: 8px; line-height: 1.7; }
 .workspace-transcript-pane .detail-transcript { flex: 1; min-height: 0; max-height: none; overflow-y: auto; border-top: 1px solid var(--border); }
 .workspace-empty-state { display: grid; flex: 1; min-height: 180px; align-content: center; justify-items: center; gap: 8px; padding: 32px 18px; color: var(--muted); text-align: center; }
 .workspace-empty-state h2, .workspace-empty-state p { margin: 0; }

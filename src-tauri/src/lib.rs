@@ -1,6 +1,7 @@
 mod asr;
 mod chunk_stitcher;
 mod ctc_alignment_ffi;
+mod embedding;
 pub mod error;
 mod media;
 mod native_manager;
@@ -8,6 +9,7 @@ mod openasr;
 mod pause_alignment;
 mod punctuation_ffi;
 mod search;
+mod semantic_search;
 mod summary;
 pub mod transcript;
 mod transcriber;
@@ -451,6 +453,41 @@ fn delete_translation_model(state: State<'_, AppState>) -> Result<(), AppError> 
 }
 
 #[tauri::command]
+fn inspect_embedding_model(state: State<'_, AppState>) -> embedding::EmbeddingModelStatus {
+    embedding::model_status(&state.app_data_dir)
+}
+
+#[tauri::command]
+async fn download_embedding_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<embedding::EmbeddingModelStatus, AppError> {
+    println!("[lib] >>> 收到前端 download_embedding_model 指令");
+    if state.model_download_active.swap(true, Ordering::Relaxed) {
+        eprintln!("[lib] 已有模型正在下载中 (ALREADY_DOWNLOADING)");
+        return Err(AppError::new("ALREADY_DOWNLOADING", "已有模型正在下载中"));
+    }
+    let app_data_dir = state.app_data_dir.clone();
+    let worker_app = app.clone();
+    let result = embedding::download_model(&worker_app, &app_data_dir).await;
+    state.model_download_active.store(false, Ordering::Relaxed);
+    match &result {
+        Ok(()) => println!("[lib] embedding::download_model 执行成功！"),
+        Err(e) => eprintln!("[lib] embedding::download_model 报错: {e}"),
+    }
+    result.map_err(AppError::failed)?;
+    Ok(embedding::model_status(&state.app_data_dir))
+}
+
+#[tauri::command]
+fn delete_embedding_model(state: State<'_, AppState>) -> Result<(), AppError> {
+    if state.model_download_active.load(Ordering::Relaxed) {
+        return Err(AppError::new("ALREADY_DOWNLOADING", "模型正在下载，暂时无法删除"));
+    }
+    embedding::delete_model(&state.app_data_dir).map_err(AppError::failed)
+}
+
+#[tauri::command]
 fn open_models_directory(state: State<'_, AppState>) -> Result<(), AppError> {
     let directory = asr::models_dir(&state.app_data_dir);
     fs::create_dir_all(&directory).map_err(|error| format!("无法创建模型目录：{error}"))?;
@@ -475,6 +512,44 @@ fn load_video_transcript(
     state: State<'_, AppState>,
 ) -> Result<asr::TranscriptResult, AppError> {
     Ok(asr::load_transcript(&current_task_data_directory(&state)?, &video_id)?)
+}
+
+#[tauri::command]
+async fn semantic_search_transcript(
+    video_id: String,
+    query: String,
+    state: State<'_, AppState>,
+) -> Result<semantic_search::SemanticSearchResponse, AppError> {
+    media::validate_job_id(&video_id).map_err(AppError::failed)?;
+    let model_data_dir = state.app_data_dir.clone();
+    if query.trim().is_empty() {
+        let embedding_status = embedding::model_status(&model_data_dir);
+        let vector_mode = if embedding_status.installed { "local-embedding" } else { "local-hash" };
+        return Ok(semantic_search::SemanticSearchResponse {
+            query,
+            results: Vec::new(),
+            indexed_segments: 0,
+            vector_mode: vector_mode.into(),
+        });
+    }
+    let task_root = current_task_data_directory(&state)?;
+    let workflow = state.workflow.clone();
+    let database = state.database.clone();
+    let control_id = format!("semantic-search:{video_id}");
+    let cancelled = workflow.enqueue_cancel(&control_id).map_err(AppError::failed)?;
+    let worker_control_id = control_id.clone();
+    let worker_video_id = video_id.clone();
+    let worker_query = query.clone();
+    let worker_model_data_dir = model_data_dir.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let _permit = workflow.acquire_heavy(&worker_control_id, &cancelled).map_err(AppError::failed)?;
+        let mut db = database.lock().map_err(|_| AppError::failed("数据库当前不可用"))?;
+        semantic_search::search(&mut db, &worker_model_data_dir, &task_root, &worker_video_id, &worker_query)
+            .map_err(AppError::failed)
+    })
+    .await;
+    state.workflow.release_cancel(&control_id);
+    result.map_err(|error| AppError::failed(format!("字幕定位任务异常退出：{error}")))?
 }
 
 /// 修改某条转录段文本并落盘(transcript.json + transcript.txt 同步更新)。
@@ -566,15 +641,28 @@ async fn translate_video_transcript(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let cancelled = state.workflow.enqueue_cancel(&video_id).map_err(AppError::failed)?;
+    println!("[translate] >>> 收到前端翻译指令: video_id={video_id}");
+    let cancelled = match state.workflow.enqueue_cancel(&video_id) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[translate] enqueue_cancel 失败: {e}");
+            return Err(AppError::failed(e));
+        }
+    };
     let workflow = state.workflow.clone();
     let model_data_dir = state.app_data_dir.clone();
     let task_data_dir = current_task_data_directory(&state)?;
     let worker_task_data_dir = task_data_dir.clone();
     let worker_app = app.clone();
     let worker_video_id = video_id.clone();
+    println!("[translate] 准备进入后台线程执行 translate_job...");
     let worker_result = tauri::async_runtime::spawn_blocking(move || {
-        let _permit = workflow.acquire_heavy(&worker_video_id, &cancelled).map_err(|e| e.to_string())?;
+        println!("[translate] 正在获取推理资源锁 (acquire_heavy)...");
+        let _permit = workflow.acquire_heavy(&worker_video_id, &cancelled).map_err(|e| {
+            eprintln!("[translate] 获取推理资源锁失败: {e}");
+            e.to_string()
+        })?;
+        println!("[translate] 推理资源锁获取成功，开始调用 summary::translate_job");
         summary::translate_job(
             &worker_app,
             &model_data_dir,
@@ -585,10 +673,17 @@ async fn translate_video_transcript(
     })
     .await;
     state.workflow.release_cancel(&video_id);
+    match &worker_result {
+        Ok(Ok(())) => println!("[translate] translate_job 执行成功！"),
+        Ok(Err(e)) => eprintln!("[translate] translate_job 执行报错: {e}"),
+        Err(e) => eprintln!("[translate] translate worker task join error: {e}"),
+    }
     worker_result.map_err(|error| AppError::failed(format!("翻译任务异常退出：{error}")))??;
+    println!("[translate] 正在生成并保存 translation.json artifact...");
     workflow::write_translation_artifact(&task_data_dir, &video_id).map_err(AppError::failed)?;
     let db = state.database.lock().map_err(|_| AppError::failed("数据库当前不可用"))?;
     workflow::mark_artifact_ready(&db, &video_id, "translation", "translation/translation.json").map_err(AppError::failed)?;
+    println!("[translate] <<< 翻译全部完成并标记 artifact_ready: video_id={video_id}");
     Ok(())
 }
 
@@ -858,8 +953,12 @@ pub fn run() {
             inspect_translation_model,
             download_translation_model,
             delete_translation_model,
+            inspect_embedding_model,
+            download_embedding_model,
+            delete_embedding_model,
             open_models_directory,
             load_video_transcript,
+            semantic_search_transcript,
             update_video_transcript_segment,
             organize_video_notes,
             translate_video_transcript,

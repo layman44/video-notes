@@ -12,14 +12,17 @@ import { loadAsrSettings, loadPlaybackPreferences, savePlaybackPreferences } fro
 import { normalizeAppError, runtime } from "./lib/runtime";
 import type { EnqueueSourceInput, ModelReadiness, PageId, QueueItem, SourcePreview, Video } from "./types";
 
+const semanticSearchPreview = import.meta.env.DEV && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("preview") === "semantic-search";
+const previewVideo: Video = { id: "preview-cache", title: "高并发系统缓存设计与实战", platform: "bilibili", duration: "48:27", sourceUrl: "https://example.invalid/preview", author: "技术公开课", thumbnailUrl: null, transcriptStatus: "ready", translationStatus: "missing", noteStatus: "missing", mediaStatus: "missing", transcriptLanguage: "zh" };
+
 export default function App() {
-  const [activePage, setActivePage] = useState<PageId>("home");
+  const [activePage, setActivePage] = useState<PageId>(semanticSearchPreview ? "video-detail" : "home");
   const [recentVideos, setRecentVideos] = useState<Video[]>([]);
   const [libraryTotal, setLibraryTotal] = useState(0);
   const [libraryRevision, setLibraryRevision] = useState(0);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
-  const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+  const [selectedVideo, setSelectedVideo] = useState<Video | null>(semanticSearchPreview ? previewVideo : null);
   const [modelReadiness, setModelReadiness] = useState<ModelReadiness | null>(null);
   const [autoPlayOnTranscriptClick, setAutoPlayOnTranscriptClick] = useState(() => loadPlaybackPreferences().autoPlayOnTranscriptClick);
 

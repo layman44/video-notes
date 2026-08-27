@@ -18,11 +18,13 @@ export interface SourcePreview extends EnqueueSourceInput {}
 
 export type AsrBackend = "funasr-nano" | "openasr-moss-q4";
 export const isMossBackend = (backend?: AsrBackend | string | null): boolean => backend === "openasr-moss-q4" || (typeof backend === "string" && (backend.startsWith("moss") || backend.startsWith("openasr")));
-export function modelKindFromId(modelId: string): "asr" | "moss" | "translation" | "summary" { if (modelId.startsWith("moss") || modelId.startsWith("openasr")) return "moss"; if (modelId.startsWith("milmmt") || modelId.startsWith("translation")) return "translation"; if (modelId.startsWith("qwen") || modelId.startsWith("summary")) return "summary"; return "asr"; }
+export function modelKindFromId(modelId: string): "asr" | "moss" | "translation" | "summary" | "embedding" { if (modelId.startsWith("moss") || modelId.startsWith("openasr")) return "moss"; if (modelId.startsWith("milmmt") || modelId.startsWith("translation")) return "translation"; if (modelId.includes("embedding") || modelId.startsWith("bge")) return "embedding"; if (modelId.startsWith("qwen") || modelId.startsWith("summary")) return "summary"; return "asr"; }
 export interface MossAsrConfig { chunkSeconds: number; overlapSeconds: number; }
 export interface AsrSettings { backend: AsrBackend; moss: MossAsrConfig; }
 export interface TranscriptSegment { id: string; chunkIndex?: number; start?: number; end?: number; startMs: number; endMs: number; text: string; translatedText?: string; avgConfidence?: number; }
 export interface TranscriptResult { jobId: string; modelId: string; language: string; translationLanguage?: string; text: string; segments: TranscriptSegment[]; pauseRepairs?: PauseBoundaryRepair[]; }
+export interface SemanticSearchResult { chunkId: string; startMs: number; endMs: number; segmentIds: string[]; snippet: string; score: number; }
+export interface SemanticSearchResponse { query: string; results: SemanticSearchResult[]; indexedSegments: number; vectorMode: "local-embedding" | "local-hash" | "none"; }
 export interface PauseBoundaryRepair { boundaryOffset: number; removePunctuationOffset?: number | null; time: number; gap: number; confidence: number; context: string; }
 export interface TranslationProgress { jobId: string; completed: number; total: number; message: string; }
 export interface SummaryProgress { jobId: string; progress: number; partIndex: number; partCount: number; message: string; }
@@ -33,7 +35,8 @@ export interface MediaPreparationResult { taskDir: string; sourceFile: string; v
 export interface AsrModelStatus { id: string; name: string; backend?: AsrBackend; installed: boolean; fileSize?: number; sizeLabel: string; path: string; }
 export type SummaryModelStatus = AsrModelStatus;
 export type TranslationModelStatus = AsrModelStatus;
-export interface ModelReadiness { asr: boolean; summary: boolean; translation: boolean; }
+export type EmbeddingModelStatus = AsrModelStatus;
+export interface ModelReadiness { asr: boolean; summary: boolean; translation: boolean; embedding?: boolean; }
 export interface ModelDownloadProgress { modelId: string; downloadedBytes: number; totalBytes?: number; progress: number; message: string; }
 export interface MediaToolStatus { name: string; available: boolean; path?: string; version?: string; }
 export interface MediaToolsStatus { ready: boolean; ytDlp: MediaToolStatus; ffmpeg: MediaToolStatus; ffprobe: MediaToolStatus; }

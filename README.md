@@ -2,7 +2,7 @@
 
 VideoNotes 是一款 Windows 本地优先桌面应用：输入公开视频链接，在本机提取音频、完成语音识别和内容整理，并导出带时间戳的 Markdown 笔记。
 
-当前状态：本地媒体处理、多语言语音识别、非中文转录翻译、内容整理和 Markdown 导出均已接入。应用使用 whisper.cpp 在 CPU 上生成带时间戳的原始转录，并复用本地 Qwen3 4B 将非中文内容翻译为简体中文、生成结构化笔记。
+当前状态：本地媒体处理、多语言高精度语音识别（Fun-ASR-Nano）、语义向量检索（Qwen3-Embedding）、非中文转录翻译、内容整理和 Markdown 导出均已接入。应用使用 Fun-ASR-Nano 在 CPU 上生成带时间戳的原始转录，并复用本地 Qwen3.5 将非中文内容翻译为简体中文、生成结构化笔记。
 
 ## 已确定的产品边界
 
@@ -11,9 +11,9 @@ VideoNotes 是一款 Windows 本地优先桌面应用：输入公开视频链接
 - 首版支持抖音、哔哩哔哩的公开且无需登录的视频链接。
 - 不读取或依赖平台字幕，所有内容统一从音频转写。
 - 不做 OCR，不分析画面、PPT、代码或画面内文字。
-- 语音识别和 Markdown 整理默认均在本地完成。
+- 语音识别、语义向量检索和 Markdown 整理默认均在本地完成。
 - 模型不包含在安装包内，首次启动后按需下载。
-- 技术方向：Rust、Tauri 2、React/TypeScript、whisper.cpp、llama.cpp、yt-dlp、FFmpeg、SQLite。
+- 技术方向：Rust、Tauri 2、React/TypeScript、Fun-ASR-Nano (SenseVoice + CTC + VAD)、Qwen3-Embedding (ONNX)、llama.cpp (Qwen3.5 2B)、yt-dlp、FFmpeg、SQLite。
 
 ## 当前已实现
 
@@ -22,10 +22,11 @@ VideoNotes 是一款 Windows 本地优先桌面应用：输入公开视频链接
 - yt-dlp 音频优先下载、`.part` 续传和机器可解析进度。
 - FFmpeg 流式转换为 16kHz、单声道、PCM 16-bit WAV，并按约 30 分钟切片。
 - 任务级本地目录、媒体清单、结果复用、进度事件、取消和失败重试。
-- 应用内下载 Whisper Medium Q5_0 多语言模型，优先使用 HF-Mirror 与魔搭国内镜像、失败后自动切换 Hugging Face 官方源，并支持跨下载源断点续传、SHA-256 完整性校验和模型删除。
-- whisper.cpp 纯 CPU 顺序转写音频切片，自动检测语种，限制线程数并降低进程优先级以控制资源占用。
+- 应用内下载 Fun-ASR-Nano 多语言语音模型、Qwen3-Embedding 语义大模型与 Qwen3.5 结构化总结模型，优先使用 HF-Mirror 与魔搭国内镜像、失败后自动切换 Hugging Face 官方源，并支持跨下载源断点续传、SHA-256 完整性校验和模型删除。
+- 纯 CPU 顺序转写音频切片，自动检测语种，限制线程数并降低进程优先级以控制资源占用。
 - 切片级 JSON 缓存与断点恢复，聚合保存带时间戳的 `transcript.json` 和纯文本 `transcript.txt`。
-- 非中文转录使用 Qwen3 4B 分批翻译为简体中文，每批结果即时保存；笔记整理优先使用中文译文。
+- 基于 Qwen3-Embedding 的 1024 维本地混合语义搜索（Vector + FTS5 BM25 + RRF 融合排序）。
+- 非中文转录使用本地大模型分批翻译为简体中文，每批结果即时保存；笔记整理优先使用中文译文。
 - 任务详情页提供中文、双语和原文三种转录显示方式，并同时搜索原文与译文。
 - 导出带摘要、要点、章节、中文译文和原文的真实 Markdown 笔记。
 - 设置页媒体组件健康检查。
@@ -45,7 +46,6 @@ VideoNotes 是一款 Windows 本地优先桌面应用：输入公开视频链接
 ```powershell
 pnpm install
 pnpm tools:fetch
-pnpm tools:fetch-whisper
 pnpm dev
 ```
 
@@ -61,6 +61,6 @@ pnpm tauri dev
 pnpm tauri build
 ```
 
-模型文件不进入安装包，由应用内的模型管理器按需下载到用户数据目录。默认多语言语音模型约 514 MiB。
+模型文件不进入安装包，由应用内的模型管理器按需下载到用户数据目录。
 
-`pnpm tools:fetch` 会准备 yt-dlp 与 FFmpeg；`pnpm tools:fetch-whisper` 会准备固定版本的 whisper.cpp CPU Worker。两个脚本都会校验固定的 SHA-256，并将许可证与构建说明放入 Tauri 资源目录。第三方说明见 [THIRD_PARTY_NOTICES.md](src-tauri/resources/tools/THIRD_PARTY_NOTICES.md)。公开分发安装包前，需要完成对应 FFmpeg GPLv3 构建的源代码与通知合规检查。
+`pnpm tools:fetch` 会准备 yt-dlp 与 FFmpeg。第三方说明见 [THIRD_PARTY_NOTICES.md](src-tauri/resources/tools/THIRD_PARTY_NOTICES.md)。公开分发安装包前，需要完成对应 FFmpeg GPLv3 构建的源代码与通知合规检查。

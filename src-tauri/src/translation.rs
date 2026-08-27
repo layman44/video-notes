@@ -281,6 +281,13 @@ pub fn translation_prompt_milmmt(
 pub fn clean_milmmt_translation_output(raw_output: &str) -> String {
     let mut text = raw_output.trim();
 
+    // If output contains a conversation transcript starting with User: / <|user|>,
+    // advance directly to the Assistant turn.
+    let trimmed = text.trim_start_matches('\u{feff}').trim_start();
+    if let Some(pos) = find_assistant_turn(trimmed) {
+        text = &trimmed[pos..];
+    }
+
     // A model can echo more than one nested role/template marker. Every
     // successful branch consumes input, so this loop always makes progress.
     loop {
@@ -339,6 +346,22 @@ pub fn clean_milmmt_translation_output(raw_output: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn find_assistant_turn(text: &str) -> Option<usize> {
+    let trimmed = text.trim_start();
+    if strip_prefix_ascii_ci(trimmed, "user:").is_some()
+        || strip_prefix_ascii_ci(trimmed, "<|user|>").is_some()
+        || strip_prefix_ascii_ci(trimmed, "<|im_start|>user").is_some()
+        || strip_prefix_ascii_ci(trimmed, "### user").is_some()
+    {
+        for marker in &["assistant:", "assistant：", "<|assistant|>", "<|im_start|>assistant", "<|start_header_id|>assistant", "### assistant"] {
+            if let Some(idx) = text.to_ascii_lowercase().find(marker) {
+                return Some(idx);
+            }
+        }
+    }
+    None
 }
 
 fn strip_prefix_ascii_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
@@ -457,5 +480,11 @@ mod tests {
         );
         let body = "译文提到 Chinese (Simplified): 作为正文。";
         assert_eq!(clean_milmmt_translation_output(body), body);
+    }
+
+    #[test]
+    fn cleans_user_assistant_chat_output() {
+        let raw = "User:\n\u{feff}Translate this from English to Chinese (Simplified):\nEnglish: An ugly duck thing.\nChinese (Simplified):\n\nAssistant:\n真是个丑陋的鸭子。\n";
+        assert_eq!(clean_milmmt_translation_output(raw), "真是个丑陋的鸭子。");
     }
 }

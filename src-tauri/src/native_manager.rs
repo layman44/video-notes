@@ -26,10 +26,6 @@ const NANO_MODEL_FILE: &str = "qwen3-0.6b-q8_0.gguf";
 const NANO_ENCODER_FILE: &str = "funasr-encoder-f16.gguf";
 const NANO_EXE: &str = "llama-funasr-cli.exe";
 
-const PARA_REPO: &str = "FunAudioLLM/Paraformer-GGUF";
-const PARA_FILE: &str = "paraformer-q8.gguf";
-const PARA_EXE: &str = "llama-funasr-paraformer.exe";
-
 const VAD_FILE: &str = "fsmn-vad.gguf";
 const VAD_HF_URL: &str = "https://huggingface.co/FunAudioLLM/fsmn-vad-GGUF/resolve/main/fsmn-vad.gguf?download=true";
 const VAD_HF_MIRROR_URL: &str = "https://hf-mirror.com/FunAudioLLM/fsmn-vad-GGUF/resolve/main/fsmn-vad.gguf";
@@ -81,14 +77,6 @@ fn model_spec(kind: &str) -> Result<ModelSpec, String> {
             file: NANO_MODEL_FILE,
             exe: NANO_EXE,
             encoder_file: Some(NANO_ENCODER_FILE),
-        }),
-        "paraformer" => Ok(ModelSpec {
-            kind: "paraformer",
-            label: "Paraformer Q8 GGUF",
-            repo: PARA_REPO,
-            file: PARA_FILE,
-            exe: PARA_EXE,
-            encoder_file: None,
         }),
         other => Err(format!("不支持的 FunASR 模式：{other}")),
     }

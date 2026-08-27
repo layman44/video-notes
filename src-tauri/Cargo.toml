@@ -23,7 +23,6 @@ tauri-plugin-dialog = "2.7.2"
 ureq = "2.12"
 url = "2"
 zip = "0.6.6"
-encoding_rs = "0.8"
 tempfile = "3"
 tokio = { version = "1", features = ["process", "time", "fs", "io-util", "rt-multi-thread", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
@@ -34,6 +33,8 @@ tar = "0.4"
 libloading = "0.8"
 whatlang = "0.16"
 regex = "1.10"
+ort = "2.0.0-rc.13"
+tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Globalization"] }

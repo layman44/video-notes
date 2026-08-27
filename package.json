@@ -8,7 +8,6 @@
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "tools:fetch": "powershell -ExecutionPolicy Bypass -File scripts/fetch-media-tools.ps1",
-    "tools:fetch-whisper": "powershell -ExecutionPolicy Bypass -File scripts/fetch-whisper-worker.ps1",
     "tools:fetch-llama": "powershell -ExecutionPolicy Bypass -File scripts/fetch-llama-worker.ps1",
     "tools:fetch-openasr": "powershell -ExecutionPolicy Bypass -File scripts/fetch-openasr-worker.ps1",
     "tauri": "tauri"

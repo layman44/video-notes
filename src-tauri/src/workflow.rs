@@ -684,6 +684,7 @@ pub fn initialize_database(db: &Connection, task_root: &Path) -> rusqlite::Resul
         migrate_jobs(db, task_root)?;
         db.execute_batch("DROP TABLE jobs;")?;
     }
+    crate::semantic_search::initialize(db)?;
     recover_interrupted_queue(db, task_root)?;
     db.execute_batch(&format!("PRAGMA user_version={SCHEMA_VERSION}; COMMIT;"))
 }
@@ -1358,6 +1359,7 @@ pub fn delete_results(db: &mut Connection, task_dir: &Path, video_id: &str) -> R
             let _ = fs::rename(trashed, original);
         }
     } else {
+        crate::semantic_search::clear_video(db, video_id)?;
         let _ = fs::remove_dir_all(&trash_dir);
     }
     database_result
@@ -1372,6 +1374,7 @@ pub fn delete_completely(
     if !video_dir.exists() {
         db.execute("DELETE FROM videos WHERE id=?1", [video_id])
             .map_err(|error| error.to_string())?;
+        crate::semantic_search::clear_video(db, video_id)?;
         return Ok(());
     }
 
@@ -1390,6 +1393,7 @@ pub fn delete_completely(
     if database_result.is_err() {
         let _ = fs::rename(&trash_dir, &video_dir);
     } else {
+        crate::semantic_search::clear_video(db, video_id)?;
         let _ = fs::remove_dir_all(&trash_dir);
     }
     database_result

@@ -1,9 +1,10 @@
-import { ArrowLeft, Download, FileText, Languages, List, LoaderCircle, LocateFixed, Maximize2, Minimize2, Pause, Pencil, Play, RefreshCw, Save, Search, Volume2, VolumeX } from "lucide-react";
+import { ArrowLeft, Download, FileText, Languages, List, LoaderCircle, LocateFixed, Maximize2, Minimize2, Pause, Pencil, Play, PlayCircle, RefreshCw, Save, Search, Sparkles, Volume2, VolumeX, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { listen } from "@tauri-apps/api/event";
 import fallbackThumbnailUrl from "../../assets/rag-thumbnail.png";
-import { isChineseLanguage } from "../../lib/language";
+import { isChineseLanguage, isChineseText } from "../../lib/language";
 import { formatErrorMessage, runtime } from "../../lib/runtime";
-import type { NoteResult, TranscriptResult, TranscriptSegment, Video } from "../../types";
+import type { NoteResult, SemanticSearchResult, TranscriptResult, TranscriptSegment, Video } from "../../types";
 
 interface VideoDetailPageProps { video: Video; onBack: () => void; onRefresh: () => Promise<void>; autoPlayOnTranscriptClick: boolean; }
 
@@ -89,6 +90,9 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SemanticSearchResult[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const [translationMode, setTranslationMode] = useState<"original" | "bilingual">("bilingual");
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -97,6 +101,7 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
   const [videoQuality, setVideoQuality] = useState("未知清晰度");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [action, setAction] = useState<"translate" | "organize" | null>(null);
+  const [translationProgress, setTranslationProgress] = useState<string | null>(null);
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const [followPlayback, setFollowPlayback] = useState(true);
 
@@ -107,6 +112,9 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
     setActiveSegmentId(null);
     setFollowPlayback(true);
     setTranslationMode("bilingual");
+    setSearchResults(null);
+    setSearchError("");
+    setQuery("");
     setCurrentMs(0);
     setDurationMs(0);
     setVideoQuality("未知清晰度");
@@ -128,6 +136,28 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
   }, [video.id, video.noteStatus]);
 
   useEffect(() => {
+    if (!runtime.isDesktop()) return undefined;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void listen<{ jobId: string; segmentId: string; translatedText: string }>("translation-segment-update", (event) => {
+      if (!active || event.payload.jobId !== video.id) return;
+      const { segmentId, translatedText } = event.payload;
+      console.log(`[VideoDetailPage] 实时收到分段翻译: segmentId=${segmentId}, 译文=${translatedText}`);
+      setTranscript((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          segments: prev.segments.map((s) => s.id === segmentId ? { ...s, translatedText } : s),
+        };
+      });
+    }).then((cleanup) => {
+      if (!active) { cleanup(); return; }
+      unlisten = cleanup;
+    });
+    return () => { active = false; unlisten?.(); };
+  }, [video.id]);
+
+  useEffect(() => {
     const updateViewport = () => setViewportHeight(window.innerHeight);
     updateViewport();
     window.addEventListener("resize", updateViewport);
@@ -143,12 +173,14 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
   const videoUrl = useMemo(() => media?.videoFile ? runtime.localAssetUrl(media.videoFile) : undefined, [media?.videoFile]);
   const segments = transcript?.segments ?? [];
   const visible = useMemo(() => {
-    const filter = query.trim();
-    return segments.filter((segment) => !filter || segment.text.includes(filter) || segment.translatedText?.includes(filter));
-  }, [segments, query]);
+    if (!searchResults) return segments;
+    const ids = new Set(searchResults.flatMap((result) => result.segmentIds));
+    return segments.filter((segment) => ids.has(segment.id));
+  }, [segments, searchResults]);
   const canTranslate = Boolean(video.transcriptLanguage && !isChineseLanguage(video.transcriptLanguage));
   const translatedCount = segments.filter((segment) => Boolean(segment.translatedText?.trim())).length;
-  const remainingTranslationCount = Math.max(0, segments.length - translatedCount);
+  const needsTranslationCount = canTranslate ? segments.filter((segment) => !segment.translatedText?.trim() && !isChineseText(segment.text)).length : 0;
+  const remainingTranslationCount = needsTranslationCount;
 
   const seekToMs = (nextMs: number, shouldPlay = false) => {
     const current = videoRef.current;
@@ -164,6 +196,27 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
   const seek = (segment: TranscriptSegment) => {
     setFollowPlayback(true);
     seekToMs(segment.startMs, autoPlayOnTranscriptClick);
+  };
+
+  const runSearch = async () => {
+    const nextQuery = query.trim();
+    if (!nextQuery) { setSearchResults(null); setSearchError(""); return; }
+    setSearching(true);
+    setSearchError("");
+    setFollowPlayback(false);
+    try {
+      const response = await runtime.semanticSearchTranscript(video.id, nextQuery);
+      setSearchResults(response.results);
+    } catch (reason) {
+      setSearchResults([]);
+      setSearchError(formatErrorMessage(reason, "语义定位失败，请稍后重试"));
+    } finally { setSearching(false); }
+  };
+  const clearSearch = () => { setQuery(""); setSearchResults(null); setSearchError(""); setFollowPlayback(true); };
+  const seekResult = (result: SemanticSearchResult) => {
+    const segment = segments.find((item) => item.id === result.segmentIds[0]);
+    if (segment) seek(segment);
+    else seekToMs(result.startMs, autoPlayOnTranscriptClick);
   };
 
   const updatePlayback = () => {
@@ -202,7 +255,7 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
   };
 
   useEffect(() => {
-    if (!followPlayback || !activeSegmentId || !visible.some((segment) => segment.id === activeSegmentId)) return;
+    if (searchResults || !followPlayback || !activeSegmentId || !visible.some((segment) => segment.id === activeSegmentId)) return;
     const container = transcriptRef.current;
     const row = segmentRefs.current.get(activeSegmentId);
     if (!container || !row) return;
@@ -220,7 +273,7 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
       const targetTop = Math.max(0, Math.min(maxScrollTop, container.scrollTop + rowRect.bottom - visibleBottom));
       container.scrollTo({ top: targetTop, behavior: "auto" });
     }
-  }, [activeSegmentId, followPlayback, visible, viewportHeight]);
+  }, [activeSegmentId, followPlayback, visible, viewportHeight, searchResults]);
 
   const saveSegment = async (segment: TranscriptSegment, original: string, translation: string, bilingual: boolean) => {
     const originalChanged = original !== segment.text.trim();
@@ -233,7 +286,28 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
     setTranscript(await runtime.loadTranscript(video.id));
     await onRefresh();
   };
-  const translate = async () => { setAction("translate"); try { await runtime.translateTranscript(video.id, () => undefined); await onRefresh(); setTranscript(await runtime.loadTranscript(video.id)); } catch (reason) { window.alert(formatErrorMessage(reason)); } finally { setAction(null); } };
+  const translate = async () => {
+    console.log("[VideoDetailPage] 点击翻译, videoId:", video.id);
+    setAction("translate");
+    setTranslationProgress(null);
+    try {
+      await runtime.translateTranscript(video.id, (progress) => {
+        console.log("[VideoDetailPage] 翻译进度:", progress);
+        setTranslationProgress(progress.message);
+      });
+      console.log("[VideoDetailPage] 翻译后端返回成功，正在刷新数据...");
+      await onRefresh();
+      const updated = await runtime.loadTranscript(video.id);
+      console.log("[VideoDetailPage] 重新加载转录完成，总段数:", updated?.segments?.length);
+      setTranscript(updated);
+    } catch (reason) {
+      console.error("[VideoDetailPage] 翻译失败:", reason);
+      window.alert(formatErrorMessage(reason));
+    } finally {
+      setAction(null);
+      setTranslationProgress(null);
+    }
+  };
   const organize = async () => { setAction("organize"); try { setNote(await runtime.organizeNotes(video, () => undefined, true)); await onRefresh(); } catch (reason) { window.alert(formatErrorMessage(reason)); } finally { setAction(null); } };
   const exportNote = async () => { if (!note) return; const path = await runtime.exportMarkdown(video.title.replace(/[\\/:*?"<>|]/g, "_") + ".md", note.markdown); if (path) window.alert("Markdown 已导出"); };
 
@@ -266,15 +340,16 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
       <section className="video-workspace-content-pane" aria-label="视频内容">
         <div className="workspace-transcript-pane">
           <div className="workspace-pane-toolbar">
-            <label className="detail-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索字幕内容" aria-label="搜索字幕内容" /></label>
+            <label className="detail-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runSearch(); } }} placeholder="搜索字幕内容" aria-label="搜索字幕内容" /></label><button type="button" className="semantic-search-submit" onClick={() => void runSearch()} disabled={searching || !query.trim()}>{searching ? <LoaderCircle size={14} className="spin" /> : <Sparkles size={14} />}定位</button>
             <div className="workspace-toolbar-actions">
               {canTranslate ? <div className="translation-switch" role="group" aria-label="字幕显示方式"><button type="button" className={translationMode === "original" ? "is-active" : ""} aria-pressed={translationMode === "original"} onClick={() => setTranslationMode("original")}>原文</button><button type="button" className={translationMode === "bilingual" ? "is-active" : ""} aria-pressed={translationMode === "bilingual"} onClick={() => setTranslationMode("bilingual")}>双语</button></div> : null}
               <button type="button" className={"transcript-follow-toggle " + (followPlayback ? "is-active" : "")} aria-pressed={followPlayback} onClick={() => setFollowPlayback((value) => !value)} title={followPlayback ? "关闭跟随播放" : "开启跟随播放"}><LocateFixed size={15} />跟随</button>
             </div>
           </div>
-          <div className="workspace-pane-hint"><div className="workspace-pane-status"><span>{segments.length} 段 · 校正字幕{canTranslate ? " · 已翻译 " + translatedCount + "/" + segments.length : ""}</span>{canTranslate && translationMode === "bilingual" && remainingTranslationCount > 0 ? <button type="button" className="translation-action" disabled={action !== null || segments.length === 0} onClick={() => void translate()}>{action === "translate" ? <LoaderCircle size={13} className="spin" /> : <Languages size={13} />}{translatedCount === 0 ? "开始翻译" : "继续翻译"}</button> : null}</div><span>点击字幕跳转</span></div>
+          <div className="workspace-pane-hint"><div className="workspace-pane-status"><span>{searchResults ? `找到 ${searchResults.length} 处可能相关的片段` : `${segments.length} 段 · 校正字幕${canTranslate ? " · 已翻译 " + translatedCount + "/" + segments.length : ""}`}</span>{searchResults ? <button type="button" className="semantic-search-clear" onClick={clearSearch}><X size={13} />清除结果</button> : canTranslate && translationMode === "bilingual" && remainingTranslationCount > 0 ? <button type="button" className="translation-action" disabled={action !== null || segments.length === 0} onClick={() => void translate()}>{action === "translate" ? <><LoaderCircle size={13} className="spin" />{translationProgress || "正在翻译..."}</> : <><Languages size={13} />{translatedCount === 0 ? "开始翻译" : "继续翻译"}</>}</button> : null}</div><span>{searchResults ? "点击片段跳播" : "点击字幕跳转"}</span></div>
+          {searchError ? <div className="semantic-search-error" role="alert">{searchError}</div> : null}
           <div className="detail-transcript" ref={transcriptRef} onWheel={() => setFollowPlayback(false)} onTouchStart={() => setFollowPlayback(false)} onPointerDown={() => setFollowPlayback(false)} onKeyDown={(event) => { if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Enter"].includes(event.key)) setFollowPlayback(false); }}>
-            {visible.length === 0 ? <div className="workspace-empty-state"><FileText size={25} /><p>{query.trim() ? "没有匹配的字幕" : "还没有字幕"}</p></div> : visible.map((segment) => { const active = activeSegmentId === segment.id; const bilingual = canTranslate && translationMode === "bilingual"; return <article className={"detail-segment " + (active ? "is-active" : "")} aria-current={active ? "true" : undefined} aria-label={"跳转到 " + time(segment.startMs)} role="button" tabIndex={0} onClick={() => seek(segment)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); seek(segment); } }} ref={(element) => { if (element) segmentRefs.current.set(segment.id, element); else segmentRefs.current.delete(segment.id); }} key={segment.id}><button type="button" className="segment-time" onClick={(event) => { event.stopPropagation(); seek(segment); }}>{time(segment.startMs)}</button><div className="segment-copy"><EditRow segment={segment} bilingual={bilingual} onSave={(original, translation, editBilingual) => saveSegment(segment, original, translation, editBilingual)} /></div></article>; })}
+            {searchResults ? searchResults.length === 0 ? <div className="workspace-empty-state"><FileText size={25} /><p>{searchError ? "定位失败" : "没有找到相关片段"}</p><small>换个说法再试试，或清除结果查看完整字幕。</small></div> : <div className="semantic-search-results">{searchResults.map((result, index) => <article key={result.chunkId} className={"semantic-result-card " + (index === 0 ? "is-featured" : "")} role="button" tabIndex={0} onClick={() => seekResult(result)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); seekResult(result); } }}><div className="semantic-result-meta"><span className="semantic-result-time">{time(result.startMs)}–{time(result.endMs)}</span>{index === 0 ? <span className="semantic-result-badge">最相关</span> : null}{index === 0 ? <button type="button" className="semantic-result-play" onClick={(event) => { event.stopPropagation(); seekResult(result); }}><PlayCircle size={16} />从这里播放</button> : null}</div><p>{result.snippet}</p></article>)}</div> : visible.length === 0 ? <div className="workspace-empty-state"><FileText size={25} /><p>还没有字幕</p></div> : visible.map((segment) => { const active = activeSegmentId === segment.id; const bilingual = canTranslate && translationMode === "bilingual"; return <article className={"detail-segment " + (active ? "is-active" : "")} aria-current={active ? "true" : undefined} aria-label={"跳转到 " + time(segment.startMs)} role="button" tabIndex={0} onClick={() => seek(segment)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); seek(segment); } }} ref={(element) => { if (element) segmentRefs.current.set(segment.id, element); else segmentRefs.current.delete(segment.id); }} key={segment.id}><button type="button" className="segment-time" onClick={(event) => { event.stopPropagation(); seek(segment); }}>{time(segment.startMs)}</button><div className="segment-copy"><EditRow segment={segment} bilingual={bilingual} onSave={(original, translation, editBilingual) => saveSegment(segment, original, translation, editBilingual)} /></div></article>; })}
           </div>
         </div>
       </section>
