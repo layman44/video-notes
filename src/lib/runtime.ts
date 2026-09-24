@@ -11,7 +11,11 @@ export function normalizeAppError(error: unknown): AppError {
   if (error instanceof Error && error.message) return { code: "UNKNOWN_ERROR", message: error.message };
   return { code: "UNKNOWN_ERROR", message: String(error || "操作失败") };
 }
-export function formatErrorMessage(error: unknown, fallback = "操作失败"): string { return error ? normalizeAppError(error).message || fallback : fallback; }
+export function formatErrorMessage(error: unknown, fallback = "操作失败"): string {
+  if (!error) return fallback;
+  const raw = normalizeAppError(error).message || fallback;
+  return raw.replace(/^[A-Z_]+:\s*/, "");
+}
 export const isTauri = () => typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 
 const unavailable = <T,>(message: string): Promise<T> => Promise.reject(new Error(message));
@@ -35,9 +39,11 @@ export const runtime = {
   async requeueVideo(videoId: string, asrBackend: AsrBackend, asrConfigJson: string): Promise<void> { if (isTauri()) await invoke("requeue_video", { videoId, asrBackend, asrConfigJson }); },
   async pauseQueueItem(id: string): Promise<void> { if (isTauri()) await invoke("pause_queue_item", { id }); },
   async resumeQueueItem(id: string): Promise<void> { if (isTauri()) await invoke("resume_queue_item", { id }); },
-  async retryQueueItem(id: string): Promise<void> { if (isTauri()) await invoke("retry_queue_item", { id }); },
+  async retryQueueItem(id: string, asrBackend?: string, asrConfigJson?: string): Promise<void> { if (isTauri()) await invoke("retry_queue_item", { id, asrBackend, asrConfigJson }); },
   async removeQueueItem(id: string): Promise<void> { if (isTauri()) await invoke("remove_queue_item", { id }); },
   async moveQueueItem(id: string, direction: "up" | "down" | "top"): Promise<void> { if (isTauri()) await invoke("move_queue_item", { id, direction }); },
+  async setMaxConcurrentDownloads(maxConcurrent: number): Promise<void> { if (isTauri()) await invoke("set_max_concurrent_downloads", { maxConcurrent }); },
+  async setVideoDownloadQuality(quality: string): Promise<void> { if (isTauri()) await invoke("set_video_download_quality", { quality }); },
   async deleteVideoResults(videoId: string): Promise<void> { if (isTauri()) await invoke("delete_video_results", { videoId }); },
   async deleteVideoCompletely(videoId: string): Promise<void> { if (isTauri()) await invoke("delete_video_completely", { videoId }); },
   async updateTranslationSegment(videoId: string, segmentId: string, text: string): Promise<void> { if (isTauri()) await invoke("update_translation_segment", { videoId, segmentId, text }); },
@@ -72,9 +78,10 @@ export const runtime = {
     if (isSemanticPreview()) return Promise.resolve({ query, indexedSegments: previewTranscript.segments.length, vectorMode: "local-hash", results: [{ chunkId: "preview-cache:1", startMs: 1938000, endMs: 2026000, segmentIds: ["p2", "p3"], snippet: "在高并发场景下，很多系统会使用缓存来提升性能。大量缓存同时过期时，请求会直接进入数据库。它会导致数据库瞬时压力激增，甚至服务不可用。", score: 0.031 }, { chunkId: "preview-cache:3", startMs: 2487000, endMs: 2514000, segmentIds: ["p4"], snippet: "热点数据失效后，大量请求会同时查询同一份数据，这也是造成系统抖动的一个重要原因。", score: 0.027 }, { chunkId: "preview-cache:4", startMs: 1690000, endMs: 1722000, segmentIds: ["p5"], snippet: "缓存失效策略需要避免大量数据在同一时间过期，合理的过期时间设计可以显著降低风险。", score: 0.024 }] });
     return unavailable("语义定位只能在桌面应用中运行");
   },
-  async updateTranscriptSegment(videoId: string, segmentId: string, text: string): Promise<void> { if (isTauri()) await invoke("update_video_transcript_segment", { videoId, segmentId, text }); },
+  async updateTranscriptSegment(videoId: string, segmentId: string, text: string, startMs?: number, endMs?: number): Promise<void> { if (isTauri()) await invoke("update_video_transcript_segment", { videoId, segmentId, text, startMs, endMs }); },
+  async deleteTranscriptSegment(videoId: string, segmentId: string): Promise<void> { if (isTauri()) await invoke("delete_video_transcript_segment", { videoId, segmentId }); },
   async organizeNotes(video: Pick<Video, "id" | "title" | "sourceUrl" | "platform" | "duration">, onProgress: (progress: SummaryProgress) => void, force = false): Promise<NoteResult> { if (!isTauri()) return unavailable("笔记整理只能在桌面应用中运行"); const unlisten = await listen<SummaryProgress>("summary-progress", ({ payload }) => { if (payload.jobId === video.id) onProgress(payload); }); try { return await invoke<NoteResult>("organize_video_notes", { videoId: video.id, title: video.title, sourceUrl: video.sourceUrl, platform: video.platform, duration: video.duration, force }); } finally { unlisten(); } },
-  async translateTranscript(videoId: string, onProgress: (progress: TranslationProgress) => void): Promise<void> { if (!isTauri()) return unavailable("翻译只能在桌面应用中运行"); const unlisten = await listen<TranslationProgress>("translation-progress", ({ payload }) => { if (payload.jobId === videoId) onProgress(payload); }); try { await invoke<void>("translate_video_transcript", { videoId }); } finally { unlisten(); } },
+  async translateTranscript(videoId: string, onProgress: (progress: TranslationProgress) => void, force = false): Promise<void> { if (!isTauri()) return unavailable("翻译只能在桌面应用中运行"); const unlisten = await listen<TranslationProgress>("translation-progress", ({ payload }) => { if (payload.jobId === videoId) onProgress(payload); }); try { await invoke<void>("translate_video_transcript", { videoId, force }); } finally { unlisten(); } },
   async loadNote(videoId: string): Promise<NoteResult> { return isTauri() ? invoke<NoteResult>("load_video_note", { videoId }) : unavailable("笔记只能在桌面应用中读取"); },
   async exportMarkdown(suggestedFilename: string, markdown: string): Promise<string | null> { return isTauri() ? invoke<string | null>("export_markdown", { suggestedFilename, markdown }) : null; },
   async downloadModel(command: string, kind: string, onProgress: (progress: ModelDownloadProgress) => void): Promise<AsrModelStatus> { if (!isTauri()) return unavailable("模型只能在桌面应用中下载"); const unlisten = await listen<ModelDownloadProgress>("model-download-progress", ({ payload }) => { if (modelKindFromId(payload.modelId) === kind) onProgress(payload); }); try { return await invoke<AsrModelStatus>(command); } finally { unlisten(); } },

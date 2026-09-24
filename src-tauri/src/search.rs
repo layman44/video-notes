@@ -166,6 +166,8 @@ pub async fn search_bilibili(
             let mut pic = entry["pic"].as_str().unwrap_or("").to_string();
             if pic.starts_with("//") {
                 pic = format!("https:{pic}");
+            } else if pic.starts_with("http://") {
+                pic = pic.replacen("http://", "https://", 1);
             }
             let cover_url = if pic.is_empty() { None } else { Some(pic) };
 

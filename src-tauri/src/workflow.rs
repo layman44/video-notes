@@ -9,11 +9,12 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Condvar, Mutex, RwLock,
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -129,7 +130,11 @@ pub struct WorkflowState {
     pub app: Mutex<Option<AppHandle>>,
     scheduler_running: AtomicBool,
     heavy: Arc<(Mutex<bool>, Condvar)>,
-    cancellations: Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>,
+    cancellations: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    active_downloads: Mutex<HashSet<String>>,
+    max_concurrent_downloads: AtomicUsize,
+    video_download_quality: RwLock<String>,
+    transcribing_active: AtomicBool,
 }
 
 impl WorkflowState {
@@ -140,8 +145,29 @@ impl WorkflowState {
             app: Mutex::new(None),
             scheduler_running: AtomicBool::new(false),
             heavy: Arc::new((Mutex::new(false), Condvar::new())),
-            cancellations: Mutex::new(std::collections::HashMap::new()),
+            cancellations: Mutex::new(HashMap::new()),
+            active_downloads: Mutex::new(HashSet::new()),
+            max_concurrent_downloads: AtomicUsize::new(2),
+            video_download_quality: RwLock::new("720p".to_string()),
+            transcribing_active: AtomicBool::new(false),
         }
+    }
+
+    pub fn set_max_concurrent_downloads(&self, count: usize) {
+        self.max_concurrent_downloads.store(count.clamp(1, 4), Ordering::SeqCst);
+    }
+
+    pub fn set_video_download_quality(&self, quality: String) {
+        if let Ok(mut lock) = self.video_download_quality.write() {
+            *lock = quality;
+        }
+    }
+
+    pub fn get_video_download_quality(&self) -> String {
+        self.video_download_quality
+            .read()
+            .map(|q| q.clone())
+            .unwrap_or_else(|_| "720p".to_string())
     }
 
     pub fn set_app(self: &Arc<Self>, app: AppHandle) {
@@ -220,17 +246,33 @@ impl WorkflowState {
             })
             .unwrap_or(false)
     }
+
     pub fn is_active(&self, id: &str) -> bool {
         self.cancellations
             .lock()
             .map(|m| m.contains_key(id))
             .unwrap_or(false)
     }
+
     pub fn has_active(&self) -> bool {
         self.cancellations
             .lock()
             .map(|m| !m.is_empty())
             .unwrap_or(true)
+    }
+
+    pub fn get_or_insert_cancel(&self, id: &str) -> Arc<AtomicBool> {
+        let mut map = match self.cancellations.lock() {
+            Ok(m) => m,
+            Err(_) => return Arc::new(AtomicBool::new(false)),
+        };
+        if let Some(existing) = map.get(id) {
+            existing.clone()
+        } else {
+            let value = Arc::new(AtomicBool::new(false));
+            map.insert(id.to_string(), value.clone());
+            value
+        }
     }
 
     pub fn enqueue_cancel(&self, id: &str) -> Result<Arc<AtomicBool>, String> {
@@ -259,17 +301,24 @@ impl WorkflowState {
         let this = self.clone();
         tauri::async_runtime::spawn_blocking(move || {
             loop {
-                match this.process_next() {
-                    Ok(true) => continue,
-                    Ok(false) | Err(_) => break,
+                let worked = this.schedule_step();
+                if !worked && !this.has_active_or_queued() {
+                    break;
                 }
+                std::thread::sleep(std::time::Duration::from_millis(200));
             }
             this.scheduler_running.store(false, Ordering::SeqCst);
-            // A concurrent enqueue can race with the final empty read.
-            if this.has_queued() {
+            if this.has_active_or_queued() {
                 this.start_scheduler();
             }
         });
+    }
+
+    fn has_active_or_queued(&self) -> bool {
+        let has_active_dl = self.active_downloads.lock().map(|d| !d.is_empty()).unwrap_or(false);
+        let transcribing = self.transcribing_active.load(Ordering::SeqCst);
+        let has_queued = self.has_queued();
+        has_active_dl || transcribing || has_queued
     }
 
     fn has_queued(&self) -> bool {
@@ -278,7 +327,7 @@ impl WorkflowState {
             .ok()
             .and_then(|db| {
                 db.query_row(
-                    "SELECT 1 FROM queue_items WHERE state='queued' LIMIT 1",
+                    "SELECT 1 FROM queue_items WHERE state IN ('queued', 'running') LIMIT 1",
                     [],
                     |_| Ok(1),
                 )
@@ -289,66 +338,180 @@ impl WorkflowState {
             .is_some()
     }
 
-    fn process_next(&self) -> Result<bool, String> {
-        let item = {
-            let db = self
-                .database
+    fn schedule_step(self: &Arc<Self>) -> bool {
+        let mut did_work = false;
+        let task_root = match self.task_data_dir.lock() {
+            Ok(r) => r.clone(),
+            Err(_) => return false,
+        };
+
+        // 1. Dispatch concurrent downloads
+        let max_downloads = self.max_concurrent_downloads.load(Ordering::Relaxed).clamp(1, 4);
+        let active_count = self.active_downloads.lock().map(|d| d.len()).unwrap_or(0);
+
+        if active_count < max_downloads {
+            let available_slots = max_downloads - active_count;
+            let candidate_items: Vec<QueueItem> = self.database
                 .lock()
-                .map_err(|_| "数据库当前不可用".to_string())?;
-            db.query_row("SELECT id, video_id, position, state, stage, progress, phase_completed, phase_total, phase_unit, attempt_count, asr_backend, asr_config_json, error_code, error_message, created_at, started_at, updated_at, finished_at, status_message FROM queue_items WHERE state='queued' ORDER BY position, created_at LIMIT 1", [], row_queue).optional().map_err(|e| e.to_string())?
-        };
-        let Some(item) = item else {
-            return Ok(false);
-        };
-        let cancel = self.enqueue_cancel(&item.id)?;
-        self.mark_running(&item.id)?;
-        let result = self.run_item(&item, &cancel);
-        self.release_cancel(&item.id);
-        match result {
-            Ok(()) => self.finish_item(&item.id, true, None),
-            Err(error) if error == "__BLOCKED__" => self.finish_item_state(
-                &item.id,
-                "blocked",
-                Some("MODEL_NOT_INSTALLED"),
-                Some("转录模型尚未安装"),
-            ),
-            Err(_error) if cancel.load(Ordering::Relaxed) => self.finish_item_state(
-                &item.id,
-                "paused",
-                Some("USER_CANCELLED"),
-                Some("已暂停，媒体和已生成的断点将被保留"),
-            ),
-            Err(error) => self.finish_item(&item.id, false, Some(error)),
-        }?;
-        Ok(true)
+                .ok()
+                .and_then(|db| {
+                    let mut s = db.prepare(
+                        "SELECT id, video_id, position, state, stage, progress, phase_completed, phase_total, phase_unit, attempt_count, asr_backend, asr_config_json, error_code, error_message, created_at, started_at, updated_at, finished_at, status_message FROM queue_items WHERE state IN ('queued', 'running') ORDER BY position, created_at"
+                    ).ok()?;
+                    let rows = s.query_map([], row_queue).ok()?;
+                    Some(rows.filter_map(Result::ok).collect())
+                })
+                .unwrap_or_default();
+
+            let mut launched = 0;
+            for item in candidate_items {
+                if launched >= available_slots {
+                    break;
+                }
+                let is_manifest_valid = valid_media_manifest(&task_root.join("tasks").join(&item.video_id));
+                if !is_manifest_valid {
+                    let mut dl_set = match self.active_downloads.lock() {
+                        Ok(s) => s,
+                        Err(_) => break,
+                    };
+                    if !dl_set.contains(&item.id) {
+                        dl_set.insert(item.id.clone());
+                        drop(dl_set);
+                        launched += 1;
+                        did_work = true;
+
+                        let this = self.clone();
+                        let item_clone = item.clone();
+                        let cancel = this.get_or_insert_cancel(&item.id);
+
+                        tauri::async_runtime::spawn_blocking(move || {
+                            let res = this.run_download(&item_clone, &cancel);
+                            if let Ok(mut dl_set) = this.active_downloads.lock() {
+                                dl_set.remove(&item_clone.id);
+                            }
+                            this.release_cancel(&item_clone.id);
+                            match res {
+                                Ok(()) => {
+                                    this.emit("queue-updated");
+                                }
+                                Err(_err) if cancel.load(Ordering::Relaxed) => {
+                                    let _ = this.finish_item_state(
+                                        &item_clone.id,
+                                        "paused",
+                                        Some("USER_CANCELLED"),
+                                        Some("已暂停，媒体和已生成的断点将被保留"),
+                                    );
+                                }
+                                Err(err) => {
+                                    let _ = this.finish_item(&item_clone.id, false, Some(err));
+                                }
+                            }
+                            this.start_scheduler();
+                        });
+                    }
+                }
+            }
+        }
+
+        // 2. Dispatch transcription (strictly single concurrency)
+        if !self.transcribing_active.load(Ordering::SeqCst) {
+            let active_dl_set = self.active_downloads.lock().map(|d| d.clone()).unwrap_or_default();
+            let candidate_transcribe_items: Vec<QueueItem> = self.database
+                .lock()
+                .ok()
+                .and_then(|db| {
+                    let mut s = db.prepare(
+                        "SELECT id, video_id, position, state, stage, progress, phase_completed, phase_total, phase_unit, attempt_count, asr_backend, asr_config_json, error_code, error_message, created_at, started_at, updated_at, finished_at, status_message FROM queue_items WHERE state IN ('queued', 'running') ORDER BY position, created_at"
+                    ).ok()?;
+                    let rows = s.query_map([], row_queue).ok()?;
+                    Some(rows.filter_map(Result::ok).collect())
+                })
+                .unwrap_or_default();
+
+            let next_to_transcribe = candidate_transcribe_items.into_iter().find(|item| {
+                if active_dl_set.contains(&item.id) {
+                    return false;
+                }
+                valid_media_manifest(&task_root.join("tasks").join(&item.video_id))
+            });
+
+            if let Some(item) = next_to_transcribe {
+                if self.transcribing_active.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                    did_work = true;
+                    let this = self.clone();
+                    let cancel = this.get_or_insert_cancel(&item.id);
+                    let _ = this.mark_running(&item.id);
+
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let res = this.run_transcription(&item, &cancel);
+                        this.transcribing_active.store(false, Ordering::SeqCst);
+                        this.release_cancel(&item.id);
+                        match res {
+                            Ok(()) => {
+                                let _ = this.finish_item(&item.id, true, None);
+                            }
+                            Err(error) if error.starts_with("__BLOCKED__") => {
+                                let msg = error.strip_prefix("__BLOCKED__:").unwrap_or("未检测到转录模型，请前往左侧「模型」页面下载安装");
+                                let _ = this.finish_item_state(
+                                    &item.id,
+                                    "blocked",
+                                    Some("MODEL_NOT_INSTALLED"),
+                                    Some(msg),
+                                );
+                            }
+                            Err(_error) if cancel.load(Ordering::Relaxed) => {
+                                let _ = this.finish_item_state(
+                                    &item.id,
+                                    "paused",
+                                    Some("USER_CANCELLED"),
+                                    Some("已暂停，媒体和已生成的断点将被保留"),
+                                );
+                            }
+                            Err(error) => {
+                                let _ = this.finish_item(&item.id, false, Some(error));
+                            }
+                        }
+                        this.start_scheduler();
+                    });
+                }
+            }
+        }
+
+        did_work
     }
 
-    fn run_item(&self, item: &QueueItem, cancel: &Arc<AtomicBool>) -> Result<(), String> {
+    fn run_download(self: &Arc<Self>, item: &QueueItem, cancel: &Arc<AtomicBool>) -> Result<(), String> {
         let app = self.app().ok_or("应用尚未完成初始化")?;
         let task_root = self
             .task_data_dir
             .lock()
             .map_err(|_| "数据目录当前不可用".to_string())?
             .clone();
-        let (source_url, backend, config) = {
+        let source_url = {
             let db = self
                 .database
                 .lock()
                 .map_err(|_| "数据库当前不可用".to_string())?;
-            db.query_row("SELECT source_url, (SELECT asr_backend FROM queue_items WHERE id=?1), (SELECT asr_config_json FROM queue_items WHERE id=?1) FROM videos WHERE id=?2", params![item.id, item.video_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?))).map_err(|e| e.to_string())?
+            db.query_row(
+                "SELECT source_url FROM videos WHERE id=?1",
+                params![item.video_id],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(|e| e.to_string())?
         };
-        let backend = backend.unwrap_or_else(|| "funasr-nano".into());
         let task_id = &item.video_id;
         let media_ready = valid_media_manifest(&task_root.join("tasks").join(task_id));
         if !media_ready {
-            self.update_stage(&item.id, "download", 0, None)?;
+            self.update_stage(&item.id, "download", 0, Some("正在连接并下载媒体资源..."))?;
             let tools = media::resolve_media_tools(&app).map_err(|e| e.to_string())?;
+            let quality = self.get_video_download_quality();
             media::prepare_media(
                 &app,
                 &tools,
                 &task_root,
                 task_id,
                 &source_url,
+                &quality,
                 cancel.clone(),
             )
             .map_err(|e| e.to_string())?;
@@ -356,14 +519,60 @@ impl WorkflowState {
         if cancel.load(Ordering::Relaxed) {
             return Err("任务已取消".into());
         }
-        self.update_stage(&item.id, "transcribe", 0, None)?;
+        self.update_download_ready(&item.id)?;
+        Ok(())
+    }
+
+    fn update_download_ready(&self, id: &str) -> Result<(), String> {
+        let db = self
+            .database
+            .lock()
+            .map_err(|_| "数据库当前不可用".to_string())?;
+        db.execute(
+            "UPDATE queue_items SET stage='download',progress=100,phase_completed=100,phase_total=100,status_message='媒体已就绪，等待转录',updated_at=?1 WHERE id=?2 AND state IN ('queued','running')",
+            params![now(), id],
+        )
+        .map_err(|e| e.to_string())?;
+        drop(db);
+        self.emit("queue-updated");
+        Ok(())
+    }
+
+    fn run_transcription(self: &Arc<Self>, item: &QueueItem, cancel: &Arc<AtomicBool>) -> Result<(), String> {
+        let app = self.app().ok_or("应用尚未完成初始化")?;
+        let task_root = self
+            .task_data_dir
+            .lock()
+            .map_err(|_| "数据目录当前不可用".to_string())?
+            .clone();
+        let (backend, config) = {
+            let db = self
+                .database
+                .lock()
+                .map_err(|_| "数据库当前不可用".to_string())?;
+            db.query_row(
+                "SELECT asr_backend, asr_config_json FROM queue_items WHERE id=?1",
+                params![item.id],
+                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .map_err(|e| e.to_string())?
+        };
+        let backend = backend.unwrap_or_else(|| "funasr-nano".into());
+        let task_id = &item.video_id;
+
+        self.update_stage(&item.id, "transcribe", 0, Some("正在准备转录..."))?;
         let installed = if backend.starts_with("openasr") || backend.starts_with("moss") {
             openasr::model_status(&app).installed
         } else {
             asr::model_status(&app, &self.app_data_dir()).installed
         };
         if !installed {
-            return Err("__BLOCKED__".into());
+            let msg = if backend.starts_with("openasr") || backend.starts_with("moss") {
+                "__BLOCKED__:未检测到 MOSS q4 转录模型，请前往左侧「模型」页面下载安装"
+            } else {
+                "__BLOCKED__:未检测到 Fun-ASR-Nano 转录模型，请前往左侧「模型」页面下载安装"
+            };
+            return Err(msg.into());
         }
         let _permit = self.acquire_heavy(&item.id, cancel)?;
         tauri::async_runtime::block_on(asr::transcribe_job(
@@ -380,18 +589,27 @@ impl WorkflowState {
         if cancel.load(Ordering::Relaxed) {
             return Err("任务已取消".into());
         }
+        self.save_artifacts(&task_root, task_id)?;
+        Ok(())
+    }
+
+    fn save_artifacts(&self, _task_root: &Path, task_id: &str) -> Result<(), String> {
         let mut db = self
             .database
             .lock()
             .map_err(|_| "数据库当前不可用".to_string())?;
-        let now = now();
+        let stamp = now();
         let tx = db.transaction().map_err(|e| e.to_string())?;
         tx.execute(
             "UPDATE videos SET library_available_at=?1, updated_at=?1 WHERE id=?2",
-            params![now, task_id],
+            params![stamp, task_id],
         )
         .map_err(|e| e.to_string())?;
-        tx.execute("INSERT INTO artifacts(video_id,artifact_type,state,relative_path,revision,updated_at) VALUES(?1,'standard_transcript','ready','transcript/transcript.json',1,?2) ON CONFLICT(video_id,artifact_type) DO UPDATE SET state='ready',revision=artifacts.revision+1,updated_at=excluded.updated_at", params![task_id, now]).map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO artifacts(video_id,artifact_type,state,relative_path,revision,updated_at) VALUES(?1,'standard_transcript','ready','transcript/transcript.json',1,?2) ON CONFLICT(video_id,artifact_type) DO UPDATE SET state='ready',revision=artifacts.revision+1,updated_at=excluded.updated_at",
+            params![task_id, stamp],
+        )
+        .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -1112,7 +1330,25 @@ pub fn queue_command(db: &Connection, id: &str, action: &str) -> rusqlite::Resul
             db.execute("UPDATE queue_items SET state='queued',error_code=NULL,error_message=NULL,status_message='等待继续处理',updated_at=?1 WHERE id=?2 AND state IN ('paused','blocked','failed')",params![now(),id])?;
         }
         "remove" => {
-            db.execute("UPDATE queue_items SET state='cancelled',status_message='已从队列移除',updated_at=?1 WHERE id=?2 AND state NOT IN ('running')",params![now(),id])?;
+            let state: Option<String> = db
+                .query_row(
+                    "SELECT state FROM queue_items WHERE id=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            match state.as_deref() {
+                Some("completed") => {
+                    db.execute("DELETE FROM queue_items WHERE id=?1", [id])?;
+                }
+                Some(_) => {
+                    db.execute(
+                        "UPDATE queue_items SET state='cancelled',status_message='已从队列移除',updated_at=?1 WHERE id=?2",
+                        params![now(), id],
+                    )?;
+                }
+                None => {}
+            }
         }
         _ => {
             return Err(rusqlite::Error::InvalidParameterName(
@@ -1123,7 +1359,13 @@ pub fn queue_command(db: &Connection, id: &str, action: &str) -> rusqlite::Resul
     Ok(())
 }
 
-pub fn retry_queue(db: &Connection, task_dir: &Path, id: &str) -> Result<(), String> {
+pub fn retry_queue(
+    db: &Connection,
+    task_dir: &Path,
+    id: &str,
+    asr_backend: Option<&str>,
+    asr_config_json: Option<&str>,
+) -> Result<(), String> {
     let (video_id, state) = db
         .query_row(
             "SELECT video_id,state FROM queue_items WHERE id=?1",
@@ -1139,11 +1381,19 @@ pub fn retry_queue(db: &Connection, task_dir: &Path, id: &str) -> Result<(), Str
     } else {
         "download"
     };
-    db.execute(
-        "UPDATE queue_items SET state='queued',stage=?1,progress=0,phase_completed=0,phase_total=100,error_code=NULL,error_message=NULL,status_message='等待重试',updated_at=?2,finished_at=NULL WHERE id=?3",
-        params![stage, now(), id],
-    )
-    .map_err(|error| error.to_string())?;
+    if let Some(backend) = asr_backend {
+        db.execute(
+            "UPDATE queue_items SET state='queued',stage=?1,progress=0,phase_completed=0,phase_total=100,error_code=NULL,error_message=NULL,status_message='等待重试',asr_backend=?2,asr_config_json=?3,updated_at=?4,finished_at=NULL WHERE id=?5",
+            params![stage, backend, asr_config_json, now(), id],
+        )
+        .map_err(|error| error.to_string())?;
+    } else {
+        db.execute(
+            "UPDATE queue_items SET state='queued',stage=?1,progress=0,phase_completed=0,phase_total=100,error_code=NULL,error_message=NULL,status_message='等待重试',updated_at=?2,finished_at=NULL WHERE id=?3",
+            params![stage, now(), id],
+        )
+        .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 
@@ -1472,6 +1722,54 @@ mod tests {
     }
 
     #[test]
+    fn remove_completed_queue_item_deletes_record_and_keeps_video() {
+        let db = Connection::open_in_memory().unwrap();
+        initialize_database(&db, Path::new(".")).unwrap();
+        let rows = enqueue(
+            &db,
+            vec![EnqueueInput {
+                title: "completed_test".into(),
+                platform: "bilibili".into(),
+                duration: "10".into(),
+                source_url: "https://x/test".into(),
+                author: None,
+                thumbnail_url: None,
+                asr_backend: None,
+                asr_config_json: None,
+            }],
+        )
+        .unwrap();
+        let queue_id = rows[0].queue_item.as_ref().unwrap().id.clone();
+        let video_id = rows[0].queue_item.as_ref().unwrap().video_id.clone();
+
+        db.execute(
+            "UPDATE queue_items SET state='completed' WHERE id=?1",
+            [&queue_id],
+        )
+        .unwrap();
+
+        queue_command(&db, &queue_id, "remove").unwrap();
+
+        let count: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM queue_items WHERE id=?1",
+                [&queue_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+
+        let video_exists: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM videos WHERE id=?1)",
+                [&video_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(video_exists);
+    }
+
+    #[test]
     fn migration_keeps_valid_transcript_without_media() {
         let temp = tempfile::tempdir().unwrap();
         let transcript_dir = temp.path().join("tasks/legacy/transcript");
@@ -1567,7 +1865,7 @@ mod tests {
         )
         .unwrap();
 
-        retry_queue(&db, temp.path(), queue_id).unwrap();
+        retry_queue(&db, temp.path(), queue_id, None, None).unwrap();
 
         let attempt: u32 = db
             .query_row(
@@ -1577,6 +1875,23 @@ mod tests {
             )
             .unwrap();
         assert_eq!(attempt, 0);
+
+        // Test updating asr_backend on retry
+        db.execute(
+            "UPDATE queue_items SET state='failed' WHERE id=?1",
+            [queue_id],
+        )
+        .unwrap();
+        retry_queue(&db, temp.path(), queue_id, Some("openasr-moss-q4"), Some("{\"mode\":\"fast\"}")).unwrap();
+        let (updated_backend, updated_config): (Option<String>, Option<String>) = db
+            .query_row(
+                "SELECT asr_backend, asr_config_json FROM queue_items WHERE id=?1",
+                [queue_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(updated_backend.as_deref(), Some("openasr-moss-q4"));
+        assert_eq!(updated_config.as_deref(), Some("{\"mode\":\"fast\"}"));
     }
 
     #[test]

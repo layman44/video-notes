@@ -71,14 +71,12 @@ pub struct MediaToolsStatus {
     pub ready: bool,
     pub yt_dlp: MediaToolStatus,
     pub ffmpeg: MediaToolStatus,
-    pub ffprobe: MediaToolStatus,
 }
 
 #[derive(Debug, Clone)]
 pub struct MediaToolPaths {
     pub yt_dlp: PathBuf,
     pub ffmpeg: PathBuf,
-    pub ffprobe: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -176,23 +174,19 @@ pub(crate) fn find_tool(app: &AppHandle, filename: &str) -> Option<PathBuf> {
 pub fn inspect_media_tools(app: &AppHandle) -> MediaToolsStatus {
     let yt_dlp = tool_status("yt-dlp", find_tool(app, "yt-dlp.exe"));
     let ffmpeg = tool_status("FFmpeg", find_tool(app, "ffmpeg.exe"));
-    let ffprobe = tool_status("ffprobe", find_tool(app, "ffprobe.exe"));
     MediaToolsStatus {
-        ready: yt_dlp.available && ffmpeg.available && ffprobe.available,
+        ready: yt_dlp.available && ffmpeg.available,
         yt_dlp,
         ffmpeg,
-        ffprobe,
     }
 }
 
 pub fn resolve_media_tools(app: &AppHandle) -> Result<MediaToolPaths, String> {
     let yt_dlp = find_tool(app, "yt-dlp.exe");
     let ffmpeg = find_tool(app, "ffmpeg.exe");
-    let ffprobe = find_tool(app, "ffprobe.exe");
     let missing = [
         ("yt-dlp", yt_dlp.is_none()),
         ("FFmpeg", ffmpeg.is_none()),
-        ("ffprobe", ffprobe.is_none()),
     ]
     .into_iter()
     .filter_map(|(name, is_missing)| is_missing.then_some(name))
@@ -207,7 +201,6 @@ pub fn resolve_media_tools(app: &AppHandle) -> Result<MediaToolPaths, String> {
     Ok(MediaToolPaths {
         yt_dlp: yt_dlp.expect("checked above"),
         ffmpeg: ffmpeg.expect("checked above"),
-        ffprobe: ffprobe.expect("checked above"),
     })
 }
 
@@ -258,7 +251,23 @@ pub fn extract_supported_url(input: &str) -> Result<(String, &'static str), Stri
         let Some(platform) = platform_for_host(host) else {
             continue;
         };
-        return Ok((url.into(), platform));
+
+        let normalized_url = if platform == "douyin" {
+            if let Some((_, modal_id)) = url.query_pairs().find(|(key, _)| key == "modal_id") {
+                let modal_id = modal_id.trim();
+                if !modal_id.is_empty() && modal_id.chars().all(|character| character.is_ascii_digit()) {
+                    format!("https://www.douyin.com/video/{modal_id}")
+                } else {
+                    url.into()
+                }
+            } else {
+                url.into()
+            }
+        } else {
+            url.into()
+        };
+
+        return Ok((normalized_url, platform));
     }
 
     Err("未找到受支持的抖音或哔哩哔哩视频链接".to_string())
@@ -556,12 +565,21 @@ fn find_thumbnail_file(source_dir: &Path) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+fn format_selector_for_quality(quality: &str) -> &'static str {
+    match quality {
+        "1080p" => "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[height<=1080][vcodec^=avc1]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "best" => "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[vcodec^=avc1]/bestvideo+bestaudio/best",
+        _ => "bestvideo[height<=720][vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[height<=720][vcodec^=avc1]/bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+    }
+}
+
 fn run_ytdlp_download(
     app: &AppHandle,
     tools: &MediaToolPaths,
     job_id: &str,
     source_url: &str,
     source_dir: &Path,
+    quality: &str,
     cookie_file: Option<&Path>,
     cancelled: &AtomicBool,
 ) -> Result<PathBuf, String> {
@@ -594,7 +612,7 @@ fn run_ytdlp_download(
         "--print",
         "after_move:filepath",
         "--format",
-        "bestvideo[height<=720][vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[height<=720][vcodec^=avc1]/bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+        format_selector_for_quality(quality),
         "--merge-output-format",
         "mp4",
         "--paths",
@@ -705,6 +723,7 @@ fn download_video(
     job_id: &str,
     source_url: &str,
     source_dir: &Path,
+    quality: &str,
     cancelled: &AtomicBool,
 ) -> Result<PathBuf, String> {
     emit_progress(app, job_id, "download", 0, "正在获取视频流……");
@@ -726,6 +745,7 @@ fn download_video(
         job_id,
         source_url,
         source_dir,
+        quality,
         cookie_file.as_deref(),
         cancelled,
     );
@@ -740,6 +760,7 @@ fn download_video(
                 job_id,
                 source_url,
                 source_dir,
+                quality,
                 Some(&fresh_cookie),
                 cancelled,
             );
@@ -749,30 +770,40 @@ fn download_video(
     result
 }
 
-fn probe_duration(ffprobe: &Path, source_file: &Path) -> Result<f64, String> {
-    let output = media_command(ffprobe)
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-        ])
+fn parse_ffmpeg_duration(output: &str) -> Option<f64> {
+    let marker = "Duration:";
+    let pos = output.find(marker)?;
+    let rest = output[pos + marker.len()..].trim_start();
+    let duration_str = rest.split(',').next()?.trim();
+    let parts = duration_str.split(':').collect::<Vec<_>>();
+    if parts.len() == 3 {
+        let hours: f64 = parts[0].trim().parse().ok()?;
+        let minutes: f64 = parts[1].trim().parse().ok()?;
+        let seconds: f64 = parts[2].trim().parse().ok()?;
+        let total = hours * 3600.0 + minutes * 60.0 + seconds;
+        if total > 0.0 {
+            Some(total)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+fn probe_duration(ffmpeg: &Path, source_file: &Path) -> Result<f64, String> {
+    let output = media_command(ffmpeg)
+        .args(["-hide_banner", "-i"])
         .arg(source_file)
         .stdin(Stdio::null())
         .output()
         .map_err(|error| format!("无法启动音频检测：{error}"))?;
-    if !output.status.success() {
-        return Err(friendly_process_error(
-            &String::from_utf8_lossy(&output.stderr),
-            "无法读取音频时长",
-        ));
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse::<f64>()
-        .map_err(|_| "无法读取音频时长".to_string())
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    parse_ffmpeg_duration(&text).ok_or_else(|| "无法读取音频时长".to_string())
 }
 
 fn normalize_audio(
@@ -977,6 +1008,7 @@ pub fn prepare_media(
     app_data_dir: &Path,
     job_id: &str,
     source_url: &str,
+    quality: &str,
     cancelled: Arc<AtomicBool>,
 ) -> Result<MediaPreparationResult, String> {
     validate_job_id(job_id)?;
@@ -1012,11 +1044,11 @@ pub fn prepare_media(
     let chunks_dir = task_dir.join("chunks");
     fs::create_dir_all(&source_dir).map_err(|error| format!("无法创建任务目录：{error}"))?;
     let video_file = find_video_file(&source_dir)
-        .or_else(|_| download_video(app, tools, job_id, &source_url, &source_dir, &cancelled))?;
+        .or_else(|_| download_video(app, tools, job_id, &source_url, &source_dir, quality, &cancelled))?;
     if cancelled.load(Ordering::Relaxed) {
         return Err("任务已取消".to_string());
     }
-    let duration_seconds = probe_duration(&tools.ffprobe, &video_file)?;
+    let duration_seconds = probe_duration(&tools.ffmpeg, &video_file)?;
     let cached_chunks = cached.as_ref().filter(|manifest| {
         !manifest.chunks.is_empty()
             && manifest
@@ -1111,7 +1143,17 @@ pub fn export_audio(
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_supported_url, format_duration, parse_percent, validate_job_id};
+    use super::{
+        extract_supported_url, format_duration, format_selector_for_quality, parse_percent,
+        validate_job_id,
+    };
+
+    #[test]
+    fn selects_expected_formats() {
+        assert!(format_selector_for_quality("720p").contains("height<=720"));
+        assert!(format_selector_for_quality("1080p").contains("height<=1080"));
+        assert!(!format_selector_for_quality("best").contains("height<="));
+    }
 
     #[test]
     fn extracts_supported_url_from_share_text() {
@@ -1119,6 +1161,23 @@ mod tests {
             extract_supported_url("复制打开哔哩哔哩 https://b23.tv/abc123，查看视频").unwrap();
         assert_eq!(url, "https://b23.tv/abc123");
         assert_eq!(platform, "bilibili");
+    }
+
+    #[test]
+    fn normalizes_douyin_modal_url() {
+        let (url, platform) = extract_supported_url(
+            "https://www.douyin.com/jingxuan?modal_id=7679755115485613353",
+        )
+        .unwrap();
+        assert_eq!(url, "https://www.douyin.com/video/7679755115485613353");
+        assert_eq!(platform, "douyin");
+
+        let (url, platform) = extract_supported_url(
+            "分享 https://www.douyin.com/recommend?modal_id=7679755115485613353&source=feed 视频",
+        )
+        .unwrap();
+        assert_eq!(url, "https://www.douyin.com/video/7679755115485613353");
+        assert_eq!(platform, "douyin");
     }
 
     #[test]

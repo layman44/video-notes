@@ -1,6 +1,6 @@
 [package]
 name = "video-notes"
-version = "0.1.43"
+version = "0.1.47"
 description = "Local-first video to Markdown desktop application"
 authors = ["VideoNotes contributors"]
 edition = "2021"

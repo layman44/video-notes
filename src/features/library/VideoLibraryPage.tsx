@@ -1,8 +1,10 @@
 import { AudioLines, Check, Download, FileText, FolderOpen, Languages, LoaderCircle, Search, SquareArrowOutUpRight, Trash2, Video as VideoIcon, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { VideoThumbnail } from "../../components/VideoThumbnail";
 import { isChineseLanguage } from "../../lib/language";
 import { runtime } from "../../lib/runtime";
+import { toast } from "../../lib/toast";
 import type { Video } from "../../types";
 
 interface VideoLibraryPageProps { onOpen: (video: Video) => void; onRefresh: () => Promise<void>; onRequeue: (videoId: string) => Promise<void>; revision?: number; }
@@ -10,14 +12,23 @@ function statusLabel(status: Video["transcriptStatus"] | Video["translationStatu
 function LibraryStatus({ icon, label, status, displayText }: { icon: React.ReactNode; label: string; status: Video["transcriptStatus"] | Video["translationStatus"] | Video["noteStatus"]; displayText?: string }) { const text = displayText || statusLabel(status); return <span className={`library-status library-status-${status}`} title={`${label}：${text}`}>{icon}<small>{label}</small><strong>{text}</strong></span>; }
 
 export function VideoLibraryPage({ onOpen, onRefresh, onRequeue, revision = 0 }: VideoLibraryPageProps) {
-  const [videos, setVideos] = useState<Video[]>([]); const [total, setTotal] = useState(0); const [page, setPage] = useState(1); const [searchInput, setSearchInput] = useState(""); const [appliedQuery, setAppliedQuery] = useState(""); const [platform, setPlatform] = useState(""); const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [busyId, setBusyId] = useState<string | null>(null); const [deleteVideo, setDeleteVideo] = useState<Video | null>(null); const pageSize = 10; const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const [videos, setVideos] = useState<Video[]>([]); const [total, setTotal] = useState(0); const [page, setPage] = useState(1); const [searchInput, setSearchInput] = useState(""); const [appliedQuery, setAppliedQuery] = useState(""); const [platform, setPlatform] = useState(""); const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [busyId, setBusyId] = useState<string | null>(null); const [deleteVideo, setDeleteVideo] = useState<Video | null>(null); const [requeueCandidate, setRequeueCandidate] = useState<Video | null>(null); const pageSize = 10; const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const loadPage = useCallback(async (targetPage: number) => { setLoading(true); setError(""); try { let result = await runtime.listVideosPage({ query: appliedQuery || undefined, platform: platform || undefined, page: targetPage, pageSize }); const lastPage = Math.max(1, Math.ceil(result.total / pageSize)); if (result.items.length === 0 && result.total > 0 && targetPage > lastPage) { result = await runtime.listVideosPage({ query: appliedQuery || undefined, platform: platform || undefined, page: lastPage, pageSize }); } setVideos(result.items); setTotal(result.total); setPage(result.page || targetPage); } catch (reason) { setError(reason instanceof Error ? reason.message : "视频库加载失败"); setVideos([]); } finally { setLoading(false); } }, [appliedQuery, platform]);
   useEffect(() => { setPage(1); void loadPage(1); }, [appliedQuery, platform]);
   useEffect(() => { if (revision > 0) void loadPage(page); }, [revision]);
   const submitSearch = (event: React.FormEvent) => { event.preventDefault(); const nextQuery = searchInput.trim(); if (nextQuery === appliedQuery) void loadPage(1); else setAppliedQuery(nextQuery); };
-  const run = async (id: string, action: () => Promise<void>) => { setBusyId(id); try { await action(); await onRefresh(); await loadPage(page); } catch (reason) { window.alert(reason instanceof Error ? reason.message : "操作失败"); } finally { setBusyId(null); } };
-  const deleteResults = async () => { if (!deleteVideo) return; const video = deleteVideo; setDeleteVideo(null); await run(video.id, () => runtime.deleteVideoResults(video.id)); };
-  const deleteCompletely = async () => { if (!deleteVideo) return; const video = deleteVideo; setDeleteVideo(null); await run(video.id, () => runtime.deleteVideoCompletely(video.id)); };
+  const run = async (id: string, action: () => Promise<void>) => { setBusyId(id); try { await action(); await onRefresh(); await loadPage(page); } catch (reason) { toast.error(reason instanceof Error ? reason.message : "操作失败"); } finally { setBusyId(null); } };
+  const deleteResults = async () => { if (!deleteVideo) return; const video = deleteVideo; setDeleteVideo(null); await run(video.id, async () => { await runtime.deleteVideoResults(video.id); toast.success(`已删除「${video.title}」的处理结果`); }); };
+  const deleteCompletely = async () => { if (!deleteVideo) return; const video = deleteVideo; setDeleteVideo(null); await run(video.id, async () => { await runtime.deleteVideoCompletely(video.id); toast.success(`已完全删除视频「${video.title}」`); }); };
+  const confirmRequeue = async () => {
+    if (!requeueCandidate) return;
+    const video = requeueCandidate;
+    setRequeueCandidate(null);
+    await run(video.id, async () => {
+      await onRequeue(video.id);
+      toast.success(`已将「${video.title}」重新加入转录队列`);
+    });
+  };
   return <section className="standard-page page-frame library-page">
     <header className="page-header"><div><h1>视频库</h1><p>这里保存已经完成转录的视频，可继续校正、翻译和整理。</p></div><span className="queue-count-badge">{total} 个视频</span></header>
     <form className="library-filter-bar" onSubmit={submitSearch}><label className="library-search-field"><Search size={16} aria-hidden="true" /><input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="搜索标题或作者" aria-label="搜索视频库" /></label><select className="library-platform-filter" value={platform} onChange={(event) => { setPlatform(event.target.value); setPage(1); }} aria-label="平台筛选"><option value="">全部平台</option><option value="bilibili">哔哩哔哩</option><option value="douyin">抖音</option></select><button type="submit" className="secondary-button compact-button" disabled={loading}>搜索</button></form>
@@ -26,11 +37,21 @@ export function VideoLibraryPage({ onOpen, onRefresh, onRequeue, revision = 0 }:
       <div className="library-list">{videos.map((video) => <article className="library-item-card" key={video.id}>
         <button type="button" className="library-item-cover" onClick={() => onOpen(video)} aria-label={`打开 ${video.title}`}><VideoThumbnail className="library-item-cover-media" src={video.thumbnailUrl} /><span className="library-play-icon"><SquareArrowOutUpRight size={16} /></span></button>
         <div className="library-item-main"><button type="button" className="library-item-title" onClick={() => onOpen(video)}>{video.title}</button><p>{video.author || "未知作者"} · {video.platform} · {video.duration}</p><div className="library-status-row"><LibraryStatus icon={<Check size={14} />} label="转录" status={video.transcriptStatus} /><LibraryStatus icon={<Languages size={14} />} label="翻译" status={video.translationStatus} displayText={isChineseLanguage(video.transcriptLanguage) ? "不需要" : undefined} /><LibraryStatus icon={<FileText size={14} />} label="笔记" status={video.noteStatus} /><span className={`library-media-status media-${video.mediaStatus}`}><FolderOpen size={14} />原始视频{video.mediaStatus === "available" ? "已保留" : video.mediaStatus === "deleted" ? "已删除" : video.mediaStatus === "missing" ? "已缺失" : "未知"}</span></div></div>
-        <div className="library-item-actions"><button type="button" title="打开详情" aria-label={`打开 ${video.title}`} onClick={() => onOpen(video)}><SquareArrowOutUpRight size={16} /></button><button type="button" title="重新转录" aria-label={`重新转录 ${video.title}`} disabled={busyId === video.id} onClick={() => void run(video.id, () => onRequeue(video.id))}><AudioLines size={16} /></button><button type="button" title="导出音频" aria-label={`导出 ${video.title} 的音频`} disabled={busyId === video.id} onClick={() => void run(video.id, async () => { const path = await runtime.exportVideoAudio(video.id, `${video.title.replace(/[\\/:*?"<>|]/g, "_")}.m4a`); if (path) window.alert("音频已导出"); })}><Download size={16} /></button><button type="button" title="删除" aria-label={`删除 ${video.title}`} disabled={busyId === video.id} onClick={() => setDeleteVideo(video)}><Trash2 size={16} /></button></div>
+        <div className="library-item-actions"><button type="button" title="打开详情" aria-label={`打开 ${video.title}`} onClick={() => onOpen(video)}><SquareArrowOutUpRight size={16} /></button><button type="button" title="重新转录" aria-label={`重新转录 ${video.title}`} disabled={busyId === video.id} onClick={() => setRequeueCandidate(video)}><AudioLines size={16} /></button><button type="button" title="导出音频" aria-label={`导出 ${video.title} 的音频`} disabled={busyId === video.id} onClick={() => void run(video.id, async () => { const path = await runtime.exportVideoAudio(video.id, `${video.title.replace(/[\\/:*?"<>|]/g, "_")}.m4a`); if (path) toast.success(`音频已导出至：${path}`); })}><Download size={16} /></button><button type="button" title="删除" aria-label={`删除 ${video.title}`} disabled={busyId === video.id} onClick={() => setDeleteVideo(video)}><Trash2 size={16} /></button></div>
       </article>)}</div>
       <div className="content-pagination library-pagination"><div className="pagination-info">第 {page} / {totalPages} 页 · 共 {total} 个</div><div className="pagination-controls"><button type="button" className="pagination-nav-button" disabled={page <= 1 || loading} onClick={() => void loadPage(page - 1)}>上一页</button><button type="button" className="pagination-nav-button" disabled={page >= totalPages || loading} onClick={() => void loadPage(page + 1)}>下一页</button></div></div>
     </>}
     </div>
-    {deleteVideo ? <div className="confirm-dialog-backdrop" role="presentation"><div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-video-title"><button type="button" className="confirm-dialog-close" onClick={() => setDeleteVideo(null)} aria-label="取消删除"><X size={17} /></button><h2 id="delete-video-title">删除视频</h2><p>请选择要删除的范围：<strong>{deleteVideo.title}</strong></p><button type="button" className="confirm-dialog-option" onClick={() => void deleteResults()}><strong>仅删除处理结果</strong><span>保留原始视频，删除转录、翻译和笔记。</span></button><button type="button" className="confirm-dialog-option is-danger" onClick={() => void deleteCompletely()}><strong>完全删除</strong><span>删除原始视频及全部处理结果，此操作无法恢复。</span></button><button type="button" className="secondary-button confirm-dialog-cancel" onClick={() => setDeleteVideo(null)}>取消</button></div></div> : null}
+    {deleteVideo ? <div className="confirm-dialog-backdrop" role="presentation" onClick={(e) => { if (e.target === e.currentTarget) setDeleteVideo(null); }}><div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-video-title"><button type="button" className="confirm-dialog-close" onClick={() => setDeleteVideo(null)} aria-label="取消删除"><X size={17} /></button><h2 id="delete-video-title">删除视频</h2><p className="confirm-dialog-desc">请选择要删除的范围：<strong className="confirm-dialog-highlight" title={deleteVideo.title}>{deleteVideo.title}</strong></p><button type="button" className="confirm-dialog-option" onClick={() => void deleteResults()}><strong>仅删除处理结果</strong><span>保留原始视频，删除转录、翻译和笔记。</span></button><button type="button" className="confirm-dialog-option is-danger" onClick={() => void deleteCompletely()}><strong>完全删除</strong><span>删除原始视频及全部处理结果，此操作无法恢复。</span></button><button type="button" className="secondary-button confirm-dialog-cancel" onClick={() => setDeleteVideo(null)}>取消</button></div></div> : null}
+    {requeueCandidate ? (
+      <ConfirmDialog
+        title="重新转录视频"
+        message="确认重新转录该视频吗？将保留原始音视频文件，使用当前配置的语音识别模型重新生成字幕。"
+        highlightText={requeueCandidate.title}
+        confirmText="确定重新转录"
+        onConfirm={() => void confirmRequeue()}
+        onCancel={() => setRequeueCandidate(null)}
+      />
+    ) : null}
   </section>;
 }

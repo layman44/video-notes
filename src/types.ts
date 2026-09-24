@@ -39,5 +39,7 @@ export type EmbeddingModelStatus = AsrModelStatus;
 export interface ModelReadiness { asr: boolean; summary: boolean; translation: boolean; embedding?: boolean; }
 export interface ModelDownloadProgress { modelId: string; downloadedBytes: number; totalBytes?: number; progress: number; message: string; }
 export interface MediaToolStatus { name: string; available: boolean; path?: string; version?: string; }
-export interface MediaToolsStatus { ready: boolean; ytDlp: MediaToolStatus; ffmpeg: MediaToolStatus; ffprobe: MediaToolStatus; }
+export interface MediaToolsStatus { ready: boolean; ytDlp: MediaToolStatus; ffmpeg: MediaToolStatus; ffprobe?: MediaToolStatus; }
 export interface DataDirectorySettings { currentPath: string; defaultPath: string; isDefault: boolean; }
+export type VideoDownloadQuality = "720p" | "1080p" | "best";
+export interface DownloadPreferences { maxConcurrentDownloads: number; videoQuality?: VideoDownloadQuality; }

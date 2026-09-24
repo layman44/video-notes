@@ -33,7 +33,9 @@ const navItems: Array<{
 export function AppShell({ activePage, children, modelReadiness, onNavigate }: AppShellProps) {
   const normalizedActive = activePage === "video-detail" ? "library" : activePage;
   const readyModelCount = modelReadiness
-    ? Number(modelReadiness.asr) + Number(modelReadiness.summary) + Number(Boolean(modelReadiness.translation))
+    ? Number(modelReadiness.asr) +
+      Number(modelReadiness.summary) +
+      Number(Boolean(modelReadiness.embedding))
     : 0;
 
   return (
@@ -63,10 +65,15 @@ export function AppShell({ activePage, children, modelReadiness, onNavigate }: A
         </nav>
 
         <div className="sidebar-status">
-          <div className="model-ready">
+          <button
+            type="button"
+            className="model-ready-button"
+            onClick={() => onNavigate("models")}
+            title="点击前往模型库管理本地模型"
+          >
             <span className={`status-dot ${modelReadiness && readyModelCount < 3 ? "is-unavailable" : ""}`} aria-hidden="true" />
             <span>{modelReadiness === null ? "正在检查本地模型" : `本地模型 ${readyModelCount}/3 已就绪`}</span>
-          </div>
+          </button>
           <div className="privacy-note">
             <ShieldCheck size={16} strokeWidth={1.8} aria-hidden="true" />
             <span>数据不会上传</span>

@@ -15,7 +15,13 @@ export function VideoThumbnail({ src, className = "", label = "VIDEO" }: VideoTh
   return (
     <span className={`video-thumbnail ${className}`}>
       {src && !imageFailed ? (
-        <img src={src} alt="" loading="lazy" onError={() => setImageFailed(true)} />
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setImageFailed(true)}
+        />
       ) : (
         <span className="video-thumbnail-placeholder" aria-hidden="true">
           <span className="video-thumbnail-orb video-thumbnail-orb-one" />

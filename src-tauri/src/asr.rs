@@ -587,7 +587,7 @@ pub async fn transcribe_job(
         verification_debug_log_path: verification_debug_log_path.to_string_lossy().into_owned(),
         funasr_chunk_seconds: 15.0,
         ffmpeg_path: media_tools.ffmpeg.to_string_lossy().into_owned(),
-        ffprobe_path: media_tools.ffprobe.to_string_lossy().into_owned(),
+        ffprobe_path: media_tools.ffmpeg.to_string_lossy().into_owned(),
         threads: thread_count,
     };
 

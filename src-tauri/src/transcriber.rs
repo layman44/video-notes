@@ -2551,15 +2551,39 @@ fn openasr_text_value(value: &Value) -> String {
     String::new()
 }
 
-async fn probe_duration(ffprobe: &str, video: &str) -> Result<f64, String> {
-    let out = hidden_command(ffprobe)
-        .args(["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video])
-        .output().await
-        .map_err(|e| format!("无法启动 ffprobe（{ffprobe}）：{e}"))?;
-    if !out.status.success() {
-        return Err(format!("ffprobe 读取视频时长失败：{}", String::from_utf8_lossy(&out.stderr)));
+fn parse_ffmpeg_duration(output: &str) -> Option<f64> {
+    let marker = "Duration:";
+    let pos = output.find(marker)?;
+    let rest = output[pos + marker.len()..].trim_start();
+    let duration_str = rest.split(',').next()?.trim();
+    let parts = duration_str.split(':').collect::<Vec<_>>();
+    if parts.len() == 3 {
+        let hours: f64 = parts[0].trim().parse().ok()?;
+        let minutes: f64 = parts[1].trim().parse().ok()?;
+        let seconds: f64 = parts[2].trim().parse().ok()?;
+        let total = hours * 3600.0 + minutes * 60.0 + seconds;
+        if total > 0.0 {
+            Some(total)
+        } else {
+            None
+        }
+    } else {
+        None
     }
-    String::from_utf8_lossy(&out.stdout).trim().parse::<f64>().map_err(|e| format!("无法解析视频时长：{e}"))
+}
+
+async fn probe_duration(ffmpeg: &str, video: &str) -> Result<f64, String> {
+    let out = hidden_command(ffmpeg)
+        .args(["-hide_banner", "-i", video])
+        .output()
+        .await
+        .map_err(|e| format!("无法启动 ffmpeg（{ffmpeg}）：{e}"))?;
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    parse_ffmpeg_duration(&text).ok_or_else(|| "无法读取媒体时长".to_string())
 }
 
 async fn extract_chunk(ffmpeg: &str, video: &str, start: f64, duration: f64, wav: &Path) -> Result<(), String> {

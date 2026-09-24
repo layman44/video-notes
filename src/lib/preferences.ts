@@ -32,7 +32,7 @@ export function savePlaybackPreferences(preferences: PlaybackPreferences) {
   }
 }
 
-import type { AsrBackend, AsrSettings, MossAsrConfig } from "../types";
+import type { AsrBackend, AsrSettings, DownloadPreferences, MossAsrConfig, VideoDownloadQuality } from "../types";
 
 const ASR_SETTINGS_KEY = "videonotes.asr-settings.v1";
 const defaultAsrSettings: AsrSettings = {
@@ -63,3 +63,38 @@ export function saveAsrSettings(settings: AsrSettings) {
     // The preference still applies for the current session when storage is unavailable.
   }
 }
+
+const DOWNLOAD_SETTINGS_KEY = "videonotes.download-preferences.v1";
+const defaultDownloadPreferences: DownloadPreferences = {
+  maxConcurrentDownloads: 2,
+  videoQuality: "720p",
+};
+
+export function loadDownloadPreferences(): DownloadPreferences {
+  if (typeof window === "undefined") return defaultDownloadPreferences;
+  try {
+    const stored = window.localStorage.getItem(DOWNLOAD_SETTINGS_KEY);
+    if (!stored) return defaultDownloadPreferences;
+    const parsed = JSON.parse(stored) as Partial<DownloadPreferences>;
+    const count = Number(parsed.maxConcurrentDownloads);
+    const validQualities: VideoDownloadQuality[] = ["720p", "1080p", "best"];
+    const videoQuality = validQualities.includes(parsed.videoQuality as VideoDownloadQuality)
+      ? (parsed.videoQuality as VideoDownloadQuality)
+      : "720p";
+    return {
+      maxConcurrentDownloads: Number.isInteger(count) && count >= 1 && count <= 3 ? count : 2,
+      videoQuality,
+    };
+  } catch {
+    return defaultDownloadPreferences;
+  }
+}
+
+export function saveDownloadPreferences(preferences: DownloadPreferences) {
+  try {
+    window.localStorage.setItem(DOWNLOAD_SETTINGS_KEY, JSON.stringify(preferences));
+  } catch {
+    // The preference still applies for the current session when storage is unavailable.
+  }
+}
+

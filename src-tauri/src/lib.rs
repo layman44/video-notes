@@ -552,12 +552,14 @@ async fn semantic_search_transcript(
     result.map_err(|error| AppError::failed(format!("字幕定位任务异常退出：{error}")))?
 }
 
-/// 修改某条转录段文本并落盘(transcript.json + transcript.txt 同步更新)。
+/// 修改某条转录段文本与起止时间并落盘(transcript.json + transcript.txt 同步更新)。
 #[tauri::command]
 fn update_video_transcript_segment(
     video_id: String,
     segment_id: String,
     text: String,
+    start_ms: Option<u64>,
+    end_ms: Option<u64>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let task_data_dir = current_task_data_directory(&state)?;
@@ -570,12 +572,21 @@ fn update_video_transcript_segment(
         return Err("找不到该转录段".to_string());
     };
     segment.text = text;
+    if let Some(s) = start_ms {
+        segment.start_ms = s;
+        segment.start = s as f64 / 1000.0;
+    }
+    if let Some(e) = end_ms {
+        segment.end_ms = e;
+        segment.end = e as f64 / 1000.0;
+    }
     // Translation is derived from Standard text. Any human edit invalidates the old
     // translation for this segment instead of silently keeping stale Chinese text.
     segment.translated_text = None;
     if transcript.segments.iter().all(|segment| segment.translated_text.is_none()) {
         transcript.translation_language = None;
     }
+    transcript.segments.sort_by_key(|s| s.start_ms);
     transcript.text = transcript
         .segments
         .iter()
@@ -587,6 +598,37 @@ fn update_video_transcript_segment(
 
     // Keep old derived files for recovery/export, but make their dependency
     // state explicit. They must never be silently presented as current.
+    let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
+    workflow::mark_derived_stale(&db, &video_id)?;
+    Ok(())
+}
+
+/// 删除某条转录段并落盘(transcript.json + transcript.txt 同步更新)。
+#[tauri::command]
+fn delete_video_transcript_segment(
+    video_id: String,
+    segment_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let task_data_dir = current_task_data_directory(&state)?;
+    let mut transcript = asr::load_transcript(&task_data_dir, &video_id)?;
+    let initial_len = transcript.segments.len();
+    transcript.segments.retain(|segment| segment.id != segment_id);
+    if transcript.segments.len() == initial_len {
+        return Err("找不到要删除的转录段".to_string());
+    }
+    if transcript.segments.iter().all(|segment| segment.translated_text.is_none()) {
+        transcript.translation_language = None;
+    }
+    transcript.text = transcript
+        .segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    asr::save_transcript(&task_data_dir, &video_id, &transcript)
+        .map_err(|error| format!("无法保存转录删除：{error}"))?;
+
     let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
     workflow::mark_derived_stale(&db, &video_id)?;
     Ok(())
@@ -604,6 +646,12 @@ async fn organize_video_notes(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<summary::NoteResult, AppError> {
+    if !summary::model_status(&state.app_data_dir).installed {
+        return Err(AppError::new(
+            "MODEL_NOT_INSTALLED",
+            "尚未安装 Qwen3.5 总结模型，请先前往左侧「模型」页面下载安装",
+        ));
+    }
     let cancelled = state.workflow.enqueue_cancel(&video_id).map_err(AppError::failed)?;
     let workflow = state.workflow.clone();
     let model_data_dir = state.app_data_dir.clone();
@@ -638,10 +686,18 @@ async fn organize_video_notes(
 #[tauri::command]
 async fn translate_video_transcript(
     video_id: String,
+    force: Option<bool>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    println!("[translate] >>> 收到前端翻译指令: video_id={video_id}");
+    let force = force.unwrap_or(false);
+    println!("[translate] >>> 收到前端翻译指令: video_id={video_id}, force={force}");
+    if !summary::model_status(&state.app_data_dir).installed {
+        return Err(AppError::new(
+            "MODEL_NOT_INSTALLED",
+            "尚未安装 Qwen3.5 总结与翻译模型，请先前往左侧「模型」页面下载安装",
+        ));
+    }
     let cancelled = match state.workflow.enqueue_cancel(&video_id) {
         Ok(c) => c,
         Err(e) => {
@@ -668,6 +724,7 @@ async fn translate_video_transcript(
             &model_data_dir,
             &worker_task_data_dir,
             &worker_video_id,
+            force,
             cancelled,
         )
     })
@@ -809,10 +866,21 @@ fn resume_queue_item(id: String, state: State<'_, AppState>) -> Result<(), Strin
 }
 
 #[tauri::command]
-fn retry_queue_item(id: String, state: State<'_, AppState>) -> Result<(), String> {
+fn retry_queue_item(
+    id: String,
+    asr_backend: Option<String>,
+    asr_config_json: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let root = current_task_data_directory(&state)?;
     let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
-    workflow::retry_queue(&db, &root, &id)?;
+    workflow::retry_queue(
+        &db,
+        &root,
+        &id,
+        asr_backend.as_deref(),
+        asr_config_json.as_deref(),
+    )?;
     drop(db);
     state.workflow.start_scheduler();
     Ok(())
@@ -842,13 +910,29 @@ async fn remove_queue_item(id: String, state: State<'_, AppState>) -> Result<(),
         return Err("任务仍在停止中，请稍后重试".into());
     }
     let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
-    workflow::queue_command(&db, &id, "remove").map_err(|e| e.to_string())
+    workflow::queue_command(&db, &id, "remove").map_err(|e| e.to_string())?;
+    drop(db);
+    state.workflow.emit("queue-updated");
+    Ok(())
 }
 
 #[tauri::command]
 fn move_queue_item(id: String, direction: String, state: State<'_, AppState>) -> Result<(), String> {
     let db = state.database.lock().map_err(|_| "数据库当前不可用".to_string())?;
     workflow::move_queue(&db, &id, &direction).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_max_concurrent_downloads(max_concurrent: usize, state: State<'_, AppState>) -> Result<(), String> {
+    state.workflow.set_max_concurrent_downloads(max_concurrent);
+    state.workflow.start_scheduler();
+    Ok(())
+}
+
+#[tauri::command]
+fn set_video_download_quality(quality: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.workflow.set_video_download_quality(quality);
+    Ok(())
 }
 
 #[tauri::command]
@@ -930,6 +1014,8 @@ pub fn run() {
             requeue_video,
             remove_queue_item,
             move_queue_item,
+            set_max_concurrent_downloads,
+            set_video_download_quality,
             delete_video_results,
             delete_video_completely,
             update_translation_segment,
@@ -960,6 +1046,7 @@ pub fn run() {
             load_video_transcript,
             semantic_search_transcript,
             update_video_transcript_segment,
+            delete_video_transcript_segment,
             organize_video_notes,
             translate_video_transcript,
             load_video_note,

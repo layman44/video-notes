@@ -1,5 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { isTauri, normalizeAppError, runtime } from "./runtime";
+import { toast } from "./toast";
 import { modelKindFromId, type AsrModelStatus, type EmbeddingModelStatus, type ModelDownloadProgress, type ModelReadiness, type SummaryModelStatus, type TranslationModelStatus } from "../types";
 
 export type ModelKind = "asr" | "moss" | "summary" | "translation" | "embedding";
@@ -154,6 +155,14 @@ class ModelDownloadStore {
         }
         console.log(`[modelDownloadStore] download completed for ${kind}, refreshing store...`);
         await this.refresh(onStatusChange);
+        const nameMap: Record<ModelKind, string> = {
+          asr: "Fun-ASR-Nano",
+          moss: "MOSS-Transcribe-Diarize q4",
+          translation: "MiLMMT 46 1B 翻译模型",
+          embedding: "Qwen3 Embedding 0.6B 语义模型",
+          summary: "Qwen3.5 2B 总结模型",
+        };
+        toast.success(`${nameMap[kind]} 已下载完成并就绪！`);
       } catch (reason) {
         console.error(`[modelDownloadStore] download failed for ${kind}:`, reason);
         const err = normalizeAppError(reason);

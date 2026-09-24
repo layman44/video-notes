@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { AppShell } from "./components/AppShell";
+import { ToastContainer } from "./components/Toast";
 import { HomePage } from "./features/home/HomePage";
 import { ModelsPage } from "./features/models/ModelsPage";
 import { SearchPage } from "./features/search/SearchPage";
@@ -8,8 +9,9 @@ import { SettingsPage } from "./features/settings/SettingsPage";
 import { QueuePage } from "./features/queue/QueuePage";
 import { VideoLibraryPage } from "./features/library/VideoLibraryPage";
 import { VideoDetailPage } from "./features/library/VideoDetailPage";
-import { loadAsrSettings, loadPlaybackPreferences, savePlaybackPreferences } from "./lib/preferences";
+import { loadAsrSettings, loadDownloadPreferences, loadPlaybackPreferences, savePlaybackPreferences } from "./lib/preferences";
 import { normalizeAppError, runtime } from "./lib/runtime";
+import { toast } from "./lib/toast";
 import type { EnqueueSourceInput, ModelReadiness, PageId, QueueItem, SourcePreview, Video } from "./types";
 
 const semanticSearchPreview = import.meta.env.DEV && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("preview") === "semantic-search";
@@ -29,8 +31,33 @@ export default function App() {
   const refreshOverview = useCallback(async () => { const page = await runtime.listVideosPage({ page: 1, pageSize: 4 }); setRecentVideos(page.items); setLibraryTotal(page.total); }, []);
   const refreshQueue = useCallback(async () => { setQueueItems(await runtime.listQueueItems()); }, []);
   const refreshContent = useCallback(async () => { await Promise.all([refreshOverview(), refreshQueue()]); }, [refreshOverview, refreshQueue]);
-  const refreshModels = useCallback(async () => { try { const [asr, moss, summary, translation] = await Promise.all([runtime.inspectAsrModel(), runtime.inspectMossModel(), runtime.inspectSummaryModel(), runtime.inspectTranslationModel()]); setModelReadiness({ asr: asr.installed || moss.installed, summary: summary.installed, translation: translation.installed }); } catch { setModelReadiness({ asr: false, summary: false, translation: false }); } }, []);
-  useEffect(() => { void Promise.all([refreshContent(), refreshModels()]).catch((reason) => window.alert(normalizeAppError(reason).message)); }, [refreshContent, refreshModels]);
+  const refreshModels = useCallback(async () => {
+    try {
+      const [asr, moss, summary, translation, embedding] = await Promise.all([
+        runtime.inspectAsrModel(),
+        runtime.inspectMossModel(),
+        runtime.inspectSummaryModel(),
+        runtime.inspectTranslationModel(),
+        runtime.inspectEmbeddingModel(),
+      ]);
+      setModelReadiness({
+        asr: asr.installed || moss.installed,
+        summary: summary.installed,
+        translation: translation.installed,
+        embedding: embedding.installed,
+      });
+    } catch {
+      setModelReadiness({ asr: false, summary: false, translation: false, embedding: false });
+    }
+  }, []);
+  useEffect(() => {
+    const downloadPrefs = loadDownloadPreferences();
+    void runtime.setMaxConcurrentDownloads(downloadPrefs.maxConcurrentDownloads);
+    if (downloadPrefs.videoQuality) {
+      void runtime.setVideoDownloadQuality(downloadPrefs.videoQuality);
+    }
+    void Promise.all([refreshContent(), refreshModels()]).catch((reason) => toast.error(`初始化数据加载失败: ${normalizeAppError(reason).message}`));
+  }, [refreshContent, refreshModels]);
   useEffect(() => { if (!runtime.isDesktop()) return undefined; let active = true; let unlistenQueue: (() => void) | undefined; let unlistenLibrary: (() => void) | undefined; void Promise.all([listen("queue-updated", () => { if (active) void refreshQueue(); }), listen("library-updated", () => { if (active) { setLibraryRevision((value) => value + 1); void refreshOverview(); } })]).then(([queueUnlisten, libraryUnlisten]) => { if (!active) { queueUnlisten(); libraryUnlisten(); return; } unlistenQueue = queueUnlisten; unlistenLibrary = libraryUnlisten; }); return () => { active = false; unlistenQueue?.(); unlistenLibrary?.(); }; }, [refreshOverview, refreshQueue]);
   const enqueue = useCallback(async (sources: EnqueueSourceInput[]) => { const settings = loadAsrSettings(); await runtime.enqueueSources(sources.map((source) => ({ ...source, asrBackend: settings.backend, asrConfigJson: JSON.stringify(settings.moss) }))); await refreshContent(); setActivePage("queue"); }, [refreshContent]);
   const enqueueOne = useCallback((source: SourcePreview) => enqueue([source]), [enqueue]);
@@ -39,5 +66,18 @@ export default function App() {
   const refreshSelectedVideo = useCallback(async () => { if (!selectedVideoId) return; const latest = await runtime.getVideo(selectedVideoId); setSelectedVideo(latest); await refreshOverview(); }, [refreshOverview, selectedVideoId]);
   useEffect(() => { if (!selectedVideoId) setSelectedVideo(null); }, [selectedVideoId]);
   const updateAutoPlay = useCallback((enabled: boolean) => { setAutoPlayOnTranscriptClick(enabled); savePlaybackPreferences({ autoPlayOnTranscriptClick: enabled }); }, []);
-  return <AppShell activePage={activePage} modelReadiness={modelReadiness} onNavigate={setActivePage}>{activePage === "home" ? <HomePage queueItems={queueItems} videos={recentVideos} videoCount={libraryTotal} onEnqueue={enqueueOne} onOpenQueue={() => setActivePage("queue")} onOpenLibrary={() => setActivePage("library")} onOpenVideo={openVideo} /> : null}{activePage === "search" ? <SearchPage queueItems={queueItems} libraryRevision={libraryRevision} onEnqueue={enqueue} onOpenVideo={openVideo} /> : null}{activePage === "queue" ? <QueuePage items={queueItems} onRefresh={refreshContent} /> : null}{activePage === "library" ? <VideoLibraryPage revision={libraryRevision} onOpen={openVideo} onRefresh={refreshOverview} onRequeue={requeueVideo} /> : null}{activePage === "models" ? <ModelsPage onStatusChange={setModelReadiness} /> : null}{activePage === "settings" ? <SettingsPage autoPlayOnTranscriptClick={autoPlayOnTranscriptClick} onAutoPlayOnTranscriptClickChange={updateAutoPlay} /> : null}{activePage === "video-detail" && selectedVideo ? <VideoDetailPage video={selectedVideo} onBack={() => setActivePage("library")} onRefresh={refreshSelectedVideo} autoPlayOnTranscriptClick={autoPlayOnTranscriptClick} /> : null}</AppShell>;
+  return (
+    <>
+      <ToastContainer />
+      <AppShell activePage={activePage} modelReadiness={modelReadiness} onNavigate={setActivePage}>
+        {activePage === "home" ? <HomePage queueItems={queueItems} videos={recentVideos} videoCount={libraryTotal} onEnqueue={enqueueOne} onOpenQueue={() => setActivePage("queue")} onOpenLibrary={() => setActivePage("library")} onOpenVideo={openVideo} /> : null}
+        {activePage === "search" ? <SearchPage queueItems={queueItems} libraryRevision={libraryRevision} onEnqueue={enqueue} onOpenVideo={openVideo} /> : null}
+        {activePage === "queue" ? <QueuePage items={queueItems} onRefresh={refreshContent} /> : null}
+        {activePage === "library" ? <VideoLibraryPage revision={libraryRevision} onOpen={openVideo} onRefresh={refreshOverview} onRequeue={requeueVideo} /> : null}
+        {activePage === "models" ? <ModelsPage onStatusChange={setModelReadiness} /> : null}
+        {activePage === "settings" ? <SettingsPage autoPlayOnTranscriptClick={autoPlayOnTranscriptClick} onAutoPlayOnTranscriptClickChange={updateAutoPlay} /> : null}
+        {activePage === "video-detail" && selectedVideo ? <VideoDetailPage video={selectedVideo} onBack={() => setActivePage("library")} onRefresh={refreshSelectedVideo} autoPlayOnTranscriptClick={autoPlayOnTranscriptClick} /> : null}
+      </AppShell>
+    </>
+  );
 }

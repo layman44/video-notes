@@ -94,12 +94,10 @@ try {
         throw "Unable to extract the verified FFmpeg archive"
     }
     $ffmpegBinary = Get-ChildItem -LiteralPath $ffmpegExtracted -Filter "ffmpeg.exe" -File -Recurse | Select-Object -First 1
-    $ffprobeBinary = Get-ChildItem -LiteralPath $ffmpegExtracted -Filter "ffprobe.exe" -File -Recurse | Select-Object -First 1
-    if (-not $ffmpegBinary -or -not $ffprobeBinary) {
-        throw "FFmpeg archive does not contain ffmpeg.exe and ffprobe.exe"
+    if (-not $ffmpegBinary) {
+        throw "FFmpeg archive does not contain ffmpeg.exe"
     }
     Copy-Item -LiteralPath $ffmpegBinary.FullName -Destination (Join-Path $videoNotesToolsDir "ffmpeg.exe") -Force
-    Copy-Item -LiteralPath $ffprobeBinary.FullName -Destination (Join-Path $videoNotesToolsDir "ffprobe.exe") -Force
     $ffmpegReadme = Get-ChildItem -LiteralPath $ffmpegExtracted -Filter "README.txt" -File -Recurse | Select-Object -First 1
     if ($ffmpegReadme) {
         Copy-Item -LiteralPath $ffmpegReadme.FullName -Destination (Join-Path $videoNotesLicensesDir "FFmpeg-build-README.txt") -Force

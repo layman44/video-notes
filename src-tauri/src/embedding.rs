@@ -184,7 +184,7 @@ fn download_single_file(
             app,
             base_downloaded + (if use_resume { existing } else { 0 }),
             Some(total_all_bytes),
-            format!("正在通过{}下载 {}……", source_name, target.filename),
+            format!("正在下载 {}……", target.filename),
         );
 
         let response = match request.call() {
@@ -244,7 +244,7 @@ fn download_single_file(
                         app,
                         base_downloaded + downloaded_current,
                         Some(total_all_bytes),
-                        format!("正在通过{}下载 {}……", source_name, target.filename),
+                        format!("正在下载 {}……", target.filename),
                     );
                 }
                 Err(e) => {
@@ -281,7 +281,7 @@ pub async fn download_model(app: &AppHandle, model_data_dir: &Path) -> Result<()
         total_all
     );
 
-    emit_download_progress(app, 0, Some(total_all), "正在连接镜像源并准备下载……");
+    emit_download_progress(app, 0, Some(total_all), "正在准备下载……");
 
     let app_handle = app.clone();
     let cache_dir_clone = cache_dir.clone();
