@@ -19,7 +19,7 @@ export function HomePage({ queueItems, videos, videoCount, onEnqueue, onOpenQueu
   };
   const pasteFromClipboard = async () => { try { setInput(await navigator.clipboard.readText()); setError(""); } catch { setError("无法读取剪贴板，请使用 Ctrl+V 粘贴"); } };
   return <section className="home-page page-frame">
-    <div className="home-intro"><h1>把视频变成可检索的笔记</h1><p>粘贴抖音或哔哩哔哩链接，下载与转写均在本机按队列完成。</p></div>
+    <div className="home-intro"><h1>把视频变成可检索的笔记</h1><p>粘贴视频链接（支持 B站、抖音、YouTube 等主流平台），下载与转写均在本机按队列完成。</p></div>
     <div className="source-entry">
       <div className={`url-field ${error ? "has-error" : ""}`}><Link2 size={21} strokeWidth={1.8} aria-hidden="true" /><input value={input} onChange={(event) => { setInput(event.target.value); if (error) setError(""); }} onKeyDown={(event) => { if (event.key === "Enter") void parseInput(); }} aria-label="视频链接或分享文本" placeholder="粘贴视频链接或分享文本" autoFocus /></div>
       <button className="primary-button parse-button" type="button" onClick={() => void parseInput()} disabled={isParsing}>{isParsing ? <LoaderCircle className="spin" size={18} aria-hidden="true" /> : null}{isParsing ? "正在解析" : "加入队列"}</button>

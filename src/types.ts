@@ -1,5 +1,5 @@
 export type PageId = "home" | "search" | "queue" | "library" | "models" | "settings" | "video-detail";
-export type Platform = "bilibili" | "douyin";
+export type Platform = "bilibili" | "douyin" | "youtube" | "tiktok" | "twitter" | string;
 export interface SearchResultItem { id: string; title: string; author: string; platform: Platform | string; duration: string; coverUrl?: string | null; videoUrl: string; playCount?: string | null; pubDate?: string | null; }
 export interface SearchResultResponse { items: SearchResultItem[]; totalPages: number; totalCount: number; page: number; }
 export type SearchOrder = "totalrank" | "click" | "pubdate" | "stow" | "dm";

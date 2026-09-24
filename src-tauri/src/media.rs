@@ -119,6 +119,8 @@ struct YtDlpMetadata {
     original_url: Option<String>,
     uploader: Option<String>,
     thumbnail: Option<String>,
+    extractor: Option<String>,
+    extractor_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -204,18 +206,46 @@ pub fn resolve_media_tools(app: &AppHandle) -> Result<MediaToolPaths, String> {
     })
 }
 
-fn platform_for_host(host: &str) -> Option<&'static str> {
+fn platform_for_host(host: &str) -> &'static str {
     let host = host.to_ascii_lowercase();
     if host == "bilibili.com"
         || host.ends_with(".bilibili.com")
         || host == "b23.tv"
         || host.ends_with(".b23.tv")
     {
-        Some("bilibili")
+        "bilibili"
     } else if host == "douyin.com" || host.ends_with(".douyin.com") {
-        Some("douyin")
+        "douyin"
+    } else if host == "youtube.com"
+        || host.ends_with(".youtube.com")
+        || host == "youtu.be"
+        || host.ends_with(".youtu.be")
+    {
+        "youtube"
+    } else if host == "tiktok.com" || host.ends_with(".tiktok.com") {
+        "tiktok"
+    } else if host == "twitter.com"
+        || host.ends_with(".twitter.com")
+        || host == "x.com"
+        || host.ends_with(".x.com")
+    {
+        "twitter"
+    } else if host == "kuaishou.com" || host.ends_with(".kuaishou.com") {
+        "kuaishou"
+    } else if host == "xiaohongshu.com"
+        || host.ends_with(".xiaohongshu.com")
+        || host == "xhslink.com"
+        || host.ends_with(".xhslink.com")
+    {
+        "xiaohongshu"
+    } else if host == "weibo.com"
+        || host.ends_with(".weibo.com")
+        || host == "weibo.cn"
+        || host.ends_with(".weibo.cn")
+    {
+        "weibo"
     } else {
-        None
+        "video"
     }
 }
 
@@ -248,9 +278,15 @@ pub fn extract_supported_url(input: &str) -> Result<(String, &'static str), Stri
         let Some(host) = url.host_str() else {
             continue;
         };
-        let Some(platform) = platform_for_host(host) else {
+        let host_lower = host.to_ascii_lowercase();
+        if host_lower == "localhost"
+            || host_lower == "127.0.0.1"
+            || host_lower == "::1"
+            || host_lower == "0.0.0.0"
+        {
             continue;
-        };
+        }
+        let platform = platform_for_host(host);
 
         let normalized_url = if platform == "douyin" {
             if let Some((_, modal_id)) = url.query_pairs().find(|(key, _)| key == "modal_id") {
@@ -270,7 +306,7 @@ pub fn extract_supported_url(input: &str) -> Result<(String, &'static str), Stri
         return Ok((normalized_url, platform));
     }
 
-    Err("未找到受支持的抖音或哔哩哔哩视频链接".to_string())
+    Err("未在输入内容中找到有效的视频链接".to_string())
 }
 
 fn format_duration(seconds: f64) -> String {
@@ -461,10 +497,16 @@ pub fn probe_source(
         .or(metadata.original_url)
         .filter(|url| extract_supported_url(url).is_ok())
         .unwrap_or(source_url);
+    let resolved_platform = metadata
+        .extractor_key
+        .as_deref()
+        .or(metadata.extractor.as_deref())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_else(|| platform.to_string());
 
     Ok(SourcePreview {
         title: metadata.title.unwrap_or_else(|| "未命名视频".to_string()),
-        platform: platform.to_string(),
+        platform: resolved_platform,
         duration: metadata
             .duration
             .map(format_duration)
@@ -621,12 +663,11 @@ fn run_ytdlp_download(
     .args(["--output", "video.%(ext)s", "--ffmpeg-location"])
     .arg(&ffmpeg_dir_clean);
 
+    command.arg("--user-agent").arg(BROWSER_USER_AGENT);
     if let Some(cookies) = cookie_file {
         command.arg("--cookies").arg(clean_path(cookies));
-        command.arg("--user-agent").arg(BROWSER_USER_AGENT);
         command.args(["--add-header", "Referer:https://www.douyin.com/"]);
-    } else {
-        command.arg("--user-agent").arg(BROWSER_USER_AGENT);
+    } else if source_url.contains("bilibili.com") || source_url.contains("b23.tv") {
         command.args(["--add-header", "Referer:https://www.bilibili.com/"]);
     }
 
@@ -1181,10 +1222,44 @@ mod tests {
     }
 
     #[test]
-    fn rejects_lookalike_and_local_urls() {
-        assert!(extract_supported_url("https://bilibili.com.example.org/video/1").is_err());
+    fn extracts_youtube_url_from_share_text() {
+        let (url, platform) =
+            extract_supported_url("Check out this video: https://www.youtube.com/watch?v=dQw4w9WgXcQ !").unwrap();
+        assert_eq!(url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+        assert_eq!(platform, "youtube");
+
+        let (url, platform) =
+            extract_supported_url("TikTok分享：来看这个 https://www.tiktok.com/@user/video/1234567 真的好笑").unwrap();
+        assert_eq!(url, "https://www.tiktok.com/@user/video/1234567");
+        assert_eq!(platform, "tiktok");
+
+        let (url, platform) =
+            extract_supported_url("Twitter推文 https://x.com/username/status/9876543210 很有意思").unwrap();
+        assert_eq!(url, "https://x.com/username/status/9876543210");
+        assert_eq!(platform, "twitter");
+
+        let (url, platform) =
+            extract_supported_url("快手视频：【我的作品】 https://www.kuaishou.com/short-video/3x7890 看看吧").unwrap();
+        assert_eq!(url, "https://www.kuaishou.com/short-video/3x7890");
+        assert_eq!(platform, "kuaishou");
+
+        let (url, platform) =
+            extract_supported_url("小红书： http://xhslink.com/a/bCdEfG 复制打开").unwrap();
+        assert_eq!(url, "http://xhslink.com/a/bCdEfG");
+        assert_eq!(platform, "xiaohongshu");
+
+        let (url, platform) =
+            extract_supported_url("通用视频： https://example.com/video/lecture1.mp4 课件视频").unwrap();
+        assert_eq!(url, "https://example.com/video/lecture1.mp4");
+        assert_eq!(platform, "video");
+    }
+
+    #[test]
+    fn rejects_local_and_invalid_urls() {
         assert!(extract_supported_url("http://127.0.0.1/video").is_err());
+        assert!(extract_supported_url("http://localhost/video").is_err());
         assert!(extract_supported_url("file:///C:/secret.txt").is_err());
+        assert!(extract_supported_url("not a url at all").is_err());
     }
 
     #[test]

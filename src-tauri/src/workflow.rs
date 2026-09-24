@@ -812,6 +812,25 @@ pub fn normalize_source_key(platform: &str, source: &str) -> String {
             }
         }
     }
+    if platform.eq_ignore_ascii_case("youtube")
+        || lower.contains("youtube.com")
+        || lower.contains("youtu.be")
+    {
+        if let Ok(u) = url::Url::parse(&lower) {
+            if let Some(host) = u.host_str() {
+                if host == "youtu.be" || host.ends_with(".youtu.be") {
+                    let id = u.path().trim_start_matches('/');
+                    if !id.is_empty() {
+                        return format!("youtube:{}", id);
+                    }
+                } else if let Some((_, v)) = u.query_pairs().find(|(k, _)| k == "v") {
+                    if !v.is_empty() {
+                        return format!("youtube:{}", v);
+                    }
+                }
+            }
+        }
+    }
     url::Url::parse(&lower)
         .map(|mut u| {
             u.set_fragment(None);
@@ -1660,6 +1679,23 @@ mod tests {
                 "https://www.bilibili.com/video/BV1ABCDEF12/?p=1"
             ),
             "bilibili:bv1abcdef12"
+        );
+    }
+    #[test]
+    fn normalizes_youtube() {
+        assert_eq!(
+            normalize_source_key(
+                "youtube",
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ&feature=shared"
+            ),
+            "youtube:dqw4w9wgxcq"
+        );
+        assert_eq!(
+            normalize_source_key(
+                "youtube",
+                "https://youtu.be/dQw4w9WgXcQ?si=abcdef"
+            ),
+            "youtube:dqw4w9wgxcq"
         );
     }
     #[test]
