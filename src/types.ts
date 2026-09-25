@@ -23,7 +23,7 @@ export interface MossAsrConfig { chunkSeconds: number; overlapSeconds: number; }
 export interface AsrSettings { backend: AsrBackend; moss: MossAsrConfig; }
 export interface TranscriptSegment { id: string; chunkIndex?: number; start?: number; end?: number; startMs: number; endMs: number; text: string; translatedText?: string; avgConfidence?: number; }
 export interface TranscriptResult { jobId: string; modelId: string; language: string; translationLanguage?: string; text: string; segments: TranscriptSegment[]; pauseRepairs?: PauseBoundaryRepair[]; }
-export interface SemanticSearchResult { chunkId: string; startMs: number; endMs: number; segmentIds: string[]; snippet: string; score: number; }
+export interface SemanticSearchResult { chunkId: string; startMs: number; endMs: number; segmentIds: string[]; bestSegmentId?: string; snippet: string; score: number; }
 export interface SemanticSearchResponse { query: string; results: SemanticSearchResult[]; indexedSegments: number; vectorMode: "local-embedding" | "local-hash" | "none"; }
 export interface PauseBoundaryRepair { boundaryOffset: number; removePunctuationOffset?: number | null; time: number; gap: number; confidence: number; context: string; }
 export interface TranslationProgress { jobId: string; completed: number; total: number; message: string; }

@@ -22,6 +22,7 @@ pub struct SemanticSearchResult {
     pub start_ms: u64,
     pub end_ms: u64,
     pub segment_ids: Vec<String>,
+    pub best_segment_id: Option<String>,
     pub snippet: String,
     pub score: f64,
 }
@@ -209,32 +210,47 @@ pub fn search(
     ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
     ranked.truncate(MAX_RESULTS);
 
+    let segment_map: HashMap<&str, &asr::TranscriptSegment> = transcript
+        .segments
+        .iter()
+        .map(|s| (s.id.as_str(), s))
+        .collect();
+
     let mut results = Vec::with_capacity(ranked.len());
     for (chunk_id, score) in ranked {
-        let result = db
+        let (start_ms, end_ms, ids_json, snippet) = db
             .query_row(
                 "SELECT start_ms,end_ms,segment_ids,snippet FROM transcript_search_meta WHERE chunk_id=?1",
                 [chunk_id.as_str()],
                 |row| {
-                    let ids: String = row.get(2)?;
-                    Ok(SemanticSearchResult {
-                        chunk_id: chunk_id.clone(),
-                        start_ms: row.get(0)?,
-                        end_ms: row.get(1)?,
-                        segment_ids: serde_json::from_str(&ids).unwrap_or_default(),
-                        snippet: row.get(3)?,
-                        score,
-                    })
+                    Ok((
+                        row.get::<_, u64>(0)?,
+                        row.get::<_, u64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
                 },
             )
             .map_err(|error| error.to_string())?;
-        results.push(result);
+
+        let segment_ids: Vec<String> = serde_json::from_str(&ids_json).unwrap_or_default();
+        let best_segment_id = find_best_segment_id(&segment_ids, &segment_map, query, &tokens);
+
+        results.push(SemanticSearchResult {
+            chunk_id: chunk_id.clone(),
+            start_ms,
+            end_ms,
+            segment_ids,
+            best_segment_id,
+            snippet,
+            score,
+        });
     }
 
     println!("[semantic_search] --- 3. 最终融合 (RRF) 排序输出 (Top {} 条): ---", results.len());
     for (i, res) in results.iter().enumerate() {
-        println!("  [结果 #{}] [{:.1}s - {:.1}s] RRF得分: {:.4} | 内容: \"{}\"",
-            i + 1, res.start_ms as f64 / 1000.0, res.end_ms as f64 / 1000.0, res.score, res.snippet.chars().take(40).collect::<String>());
+        println!("  [结果 #{}] [{:.1}s - {:.1}s] RRF得分: {:.4} (精准锚点: {:?}) | 内容: \"{}\"",
+            i + 1, res.start_ms as f64 / 1000.0, res.end_ms as f64 / 1000.0, res.score, res.best_segment_id, res.snippet.chars().take(40).collect::<String>());
     }
     println!("[semantic_search] ========================================================");
 
@@ -373,6 +389,85 @@ fn make_chunks(transcript: &asr::TranscriptResult) -> Vec<Chunk> {
     chunks
 }
 
+fn normalize_fullwidth_char(c: char) -> char {
+    let u = c as u32;
+    if (0xFF01..=0xFF5E).contains(&u) {
+        char::from_u32(u - 0xFEE0).unwrap_or(c)
+    } else {
+        c
+    }
+}
+
+fn normalize_text(input: &str) -> String {
+    input.chars().map(normalize_fullwidth_char).collect()
+}
+
+fn find_best_segment_id(
+    segment_ids: &[String],
+    segment_map: &HashMap<&str, &asr::TranscriptSegment>,
+    query: &str,
+    query_tokens: &[String],
+) -> Option<String> {
+    if segment_ids.is_empty() {
+        return None;
+    }
+
+    let query_norm = normalize_text(query).trim().to_lowercase();
+
+    // 1. 优先：完全包含用户搜索词原词（全角/半角归一化且不区分大小写）
+    if !query_norm.is_empty() {
+        for id in segment_ids {
+            if let Some(seg) = segment_map.get(id.as_str()) {
+                if normalize_text(&seg.text).to_lowercase().contains(&query_norm) {
+                    return Some((*id).clone());
+                }
+                if let Some(trans) = &seg.translated_text {
+                    if normalize_text(trans).to_lowercase().contains(&query_norm) {
+                        return Some((*id).clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. 次优：Token 命中重合度最高
+    if !query_tokens.is_empty() {
+        let mut best_id = None;
+        let mut max_overlap = 0usize;
+
+        for id in segment_ids {
+            if let Some(seg) = segment_map.get(id.as_str()) {
+                let seg_tokens = tokenize(&seg.text);
+                let mut overlap = 0usize;
+                for q_tok in query_tokens {
+                    if seg_tokens.iter().any(|t| t == q_tok) {
+                        overlap += 1;
+                    }
+                }
+                if let Some(trans) = &seg.translated_text {
+                    let trans_tokens = tokenize(trans);
+                    for q_tok in query_tokens {
+                        if trans_tokens.iter().any(|t| t == q_tok) {
+                            overlap += 1;
+                        }
+                    }
+                }
+                if overlap > max_overlap {
+                    max_overlap = overlap;
+                    best_id = Some((*id).clone());
+                }
+            }
+        }
+
+        if max_overlap > 0 {
+            return best_id;
+        }
+    }
+
+    // 3. 兜底回退：若为纯向量语义召回（无原词/Token 命中文本），对齐到切片首句作为语境起点
+    segment_ids.first().cloned()
+}
+
 fn tokenize(text: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut latin = String::new();
@@ -383,12 +478,13 @@ fn tokenize(text: &str) -> Vec<String> {
         }
     };
     for character in text.chars() {
-        if character.is_ascii_alphanumeric() || character == '_' {
-            latin.push(character);
+        let c = normalize_fullwidth_char(character);
+        if c.is_ascii_alphanumeric() || c == '_' {
+            latin.push(c);
         } else {
             flush(&mut latin, &mut result);
-            if !character.is_whitespace() && !character.is_ascii_punctuation() {
-                result.push(character.to_string());
+            if !c.is_whitespace() && !c.is_ascii_punctuation() {
+                result.push(c.to_string());
             }
         }
     }
@@ -451,7 +547,7 @@ fn transcript_hash(transcript: &asr::TranscriptResult, embedding_installed: bool
             segment.translated_text.as_deref().unwrap_or(""),
         ))
         .collect::<Vec<_>>();
-    let model_tag = if embedding_installed { "qwen3-v2" } else { "hash-v1" };
+    let model_tag = if embedding_installed { "qwen3-v3" } else { "hash-v2" };
     let bytes = serde_json::to_vec(&(input, model_tag)).unwrap_or_default();
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -468,6 +564,11 @@ mod tests {
     }
 
     #[test]
+    fn tokenizes_fullwidth_latin_to_ascii() {
+        assert_eq!(tokenize("说一块ＡＡ制"), vec!["说", "一", "块", "aa", "制"]);
+    }
+
+    #[test]
     fn vector_is_normalized() {
         let vector = hashed_vector(&tokenize("缓存缓存"));
         let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
@@ -475,14 +576,14 @@ mod tests {
     }
 
     #[test]
-    fn indexes_and_retrieves_timestamped_chunks() {
+    fn indexes_and_retrieves_timestamped_chunks_with_best_segment() {
         let root = tempdir().unwrap();
         let transcript = TranscriptResult {
             job_id: "video-1".into(),
             model_id: "test".into(),
             language: "zh".into(),
             translation_language: None,
-            text: "第一段 缓存失效 第二段 业务降级".into(),
+            text: "第一段 提前顺走钱包 第二段 为基建计划出力 第三段 吃饭不喊我吃完说一块AA".into(),
             segments: vec![
                 TranscriptSegment {
                     id: "seg-1".into(),
@@ -491,7 +592,7 @@ mod tests {
                     end: 2.0,
                     start_ms: 0,
                     end_ms: 2000,
-                    text: "第一段 缓存失效".into(),
+                    text: "第一段 提前顺走钱包".into(),
                     translated_text: None,
                     avg_confidence: Some(0.9),
                 },
@@ -502,7 +603,18 @@ mod tests {
                     end: 4.0,
                     start_ms: 2000,
                     end_ms: 4000,
-                    text: "第二段 业务降级".into(),
+                    text: "第二段 为基建计划出力".into(),
+                    translated_text: None,
+                    avg_confidence: Some(0.9),
+                },
+                TranscriptSegment {
+                    id: "seg-3".into(),
+                    chunk_index: 0,
+                    start: 4.0,
+                    end: 6.0,
+                    start_ms: 4000,
+                    end_ms: 6000,
+                    text: "第三段 吃饭不喊我吃完说一块AA".into(),
                     translated_text: None,
                     avg_confidence: Some(0.9),
                 },
@@ -512,8 +624,8 @@ mod tests {
         asr::save_transcript(root.path(), "video-1", &transcript).unwrap();
 
         let mut db = Connection::open_in_memory().unwrap();
-        let response = search(&mut db, root.path(), root.path(), "video-1", "缓存失效").unwrap();
-        assert_eq!(response.results.len(), 1);
-        assert_eq!(response.results[0].start_ms, 0);
+        let response = search(&mut db, root.path(), root.path(), "video-1", "AA").unwrap();
+        assert!(!response.results.is_empty());
+        assert_eq!(response.results[0].best_segment_id, Some("seg-3".into()));
     }
 }

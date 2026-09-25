@@ -417,7 +417,8 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
   const jumpToSearchMatch = (index: number, resultsList: SemanticSearchResult[]) => {
     if (resultsList.length === 0) return;
     const target = resultsList[index];
-    const segment = segments.find((item) => item.id === target.segmentIds[0]);
+    const targetSegmentId = target.bestSegmentId || target.segmentIds[0];
+    const segment = segments.find((item) => item.id === targetSegmentId);
     setSearchIndex(index);
     setShowResultCards(false);
     setTargetSearchSegmentId(segment?.id ?? null);
@@ -473,7 +474,8 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
     if (searchResults) {
       jumpToSearchMatch(index, searchResults);
     } else {
-      const segment = segments.find((item) => item.id === result.segmentIds[0]);
+      const targetSegmentId = result.bestSegmentId || result.segmentIds[0];
+      const segment = segments.find((item) => item.id === targetSegmentId);
       if (segment) seek(segment);
       else seekToMs(result.startMs, autoPlayOnTranscriptClick);
     }
