@@ -1997,7 +1997,40 @@ async fn run_openasr_moss(
     })?;
 
     let total_ms = (duration * 1000.0).round() as u64;
-    let (mut segments, mut start, mut chunk_index) = if let Some(checkpoint_path) = &request.checkpoint_file {
+
+    // 自适应音频软切片规划：扫描音频自然换气停顿点
+    let min_chunk_seconds = (chunk_seconds * 0.6).clamp(12.0, 30.0);
+    let max_chunk_seconds = (chunk_seconds * 1.25).clamp(24.0, 60.0);
+    let pauses = match crate::audio_chunker::detect_silence_pauses_ffmpeg(
+        &request.config.ffmpeg_path,
+        &request.video_path,
+        &cancel,
+    ).await {
+        Ok(p) => {
+            if !p.is_empty() {
+                send(&on_event, TranscriptionEvent::Log {
+                    message: format!("VAD 自适应停顿分析：检测到 {} 处自然换气停顿，启用平滑软切片", p.len()),
+                })?;
+            }
+            p
+        }
+        Err(e) => {
+            send(&on_event, TranscriptionEvent::Log {
+                message: format!("停顿分析跳过（{e}），回退为固定时间窗口切片"),
+            })?;
+            Vec::new()
+        }
+    };
+    let planned_chunks = crate::audio_chunker::plan_adaptive_chunks(
+        duration,
+        &pauses,
+        chunk_seconds,
+        min_chunk_seconds,
+        max_chunk_seconds,
+        overlap_seconds,
+    );
+
+    let (mut segments, resume_start, resume_chunk_index) = if let Some(checkpoint_path) = &request.checkpoint_file {
         if let Ok(raw) = tokio::fs::read_to_string(checkpoint_path).await {
             if let Ok(data) = serde_json::from_str::<MossCheckpointData>(&raw) {
                 match data {
@@ -2028,19 +2061,40 @@ async fn run_openasr_moss(
         (request.initial_segments.clone(), 0.0f64, 0usize)
     };
 
+    let starting_chunk_pos = if resume_chunk_index > 0 {
+        planned_chunks
+            .iter()
+            .position(|c| c.index == resume_chunk_index)
+            .unwrap_or_else(|| {
+                planned_chunks
+                    .iter()
+                    .position(|c| (c.start - resume_start).abs() < 1.0 || c.start >= resume_start)
+                    .unwrap_or(0)
+            })
+    } else {
+        0
+    };
+
+    let start_pos_seconds = planned_chunks.get(starting_chunk_pos).map(|c| c.start).unwrap_or(resume_start);
+
     send(&on_event, TranscriptionEvent::PhaseProgress {
         phase: "recognition".into(),
-        completed: (start * 1000.0).round() as u64,
+        completed: (start_pos_seconds * 1000.0).round() as u64,
         total: Some(total_ms),
         unit: "milliseconds".into(),
-        message: if start > 0.0 {
-            format!("MOSS 正在从 {} 继续转写……", format_seconds_mmss(start))
+        message: if start_pos_seconds > 0.0 {
+            format!("MOSS 正在从 {} 继续转写……", format_seconds_mmss(start_pos_seconds))
         } else {
             "MOSS 模型已就绪，正在逐段转写……".into()
         },
     })?;
 
-    while start < duration {
+    for planned_chunk in planned_chunks.iter().skip(starting_chunk_pos) {
+        let chunk_index = planned_chunk.index;
+        let start = planned_chunk.start;
+        let actual_duration = planned_chunk.duration;
+        let wav_path = temp.path().join(format!("moss-{chunk_index:04}.wav"));
+
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill().await;
             let _ = child.wait().await;
@@ -2049,8 +2103,6 @@ async fn run_openasr_moss(
             send(&on_event, TranscriptionEvent::Cancelled {})?;
             return Ok(());
         }
-        let actual_duration = (duration - start).min(chunk_seconds);
-        let wav_path = temp.path().join(format!("moss-{chunk_index:04}.wav"));
 
         // 1. FFmpeg 音频切片提取（支持即时抢占中断）
         tokio::select! {
@@ -2156,11 +2208,11 @@ async fn run_openasr_moss(
         let local_segments = parse_openasr_segments(&body, chunk_index, actual_duration);
         stitch_openasr_chunk(&mut segments, local_segments, start);
 
-        let next_start = start + step_seconds;
+        let next_start = planned_chunks.get(chunk_index + 1).map(|c| c.start).unwrap_or(duration);
         let next_chunk_index = chunk_index + 1;
         save_moss_checkpoint(request.checkpoint_file.as_deref(), &segments, next_start, next_chunk_index).await;
 
-        let processed_until = (start + actual_duration).min(duration);
+        let processed_until = planned_chunk.end.min(duration);
         let all_text = segments.iter().map(|segment| segment.text.as_str()).collect::<Vec<_>>().join(" ");
         send(&on_event, TranscriptionEvent::PhaseProgress {
             phase: "recognition".into(),
@@ -2174,8 +2226,6 @@ async fn run_openasr_moss(
             language: Some(dominant_language(&all_text).to_string()),
             processed_until,
         })?;
-        chunk_index += 1;
-        start += step_seconds;
     }
 
     let _ = child.kill().await;
@@ -2725,5 +2775,38 @@ mod transcriber_tests {
         assert_eq!(collapse_consecutive_punctuation("这是第一句。，第二句"), "这是第一句。第二句");
         assert_eq!(collapse_consecutive_punctuation("真的吗，？好啊！"), "真的吗？好啊！");
         assert_eq!(collapse_consecutive_punctuation("等等，，，你说什么"), "等等，你说什么");
+    }
+
+    #[test]
+    fn stitches_openasr_soft_cut_without_repetition_or_truncation() {
+        use super::{stitch_openasr_chunk, TranscriptSegment};
+
+        // 第一个分片在 28.0s 处自然停顿，实际语音在 27.5s 结束
+        let mut accumulated = vec![
+            TranscriptSegment {
+                id: "openasr-moss-0-0".into(),
+                start: 0.0,
+                end: 27.50,
+                text: "今天我们来讨论自适应停顿点软切片的实现原理。".into(),
+            },
+        ];
+
+        // 第二个分片在 28.0s 处自然切开，第二段语音从 28.5s（即局部 0.5s）开始
+        let incoming = vec![
+            TranscriptSegment {
+                id: "openasr-moss-1-0".into(),
+                start: 0.50,
+                end: 5.20,
+                text: "首先要识别换气停顿点。".into(),
+            },
+        ];
+
+        stitch_openasr_chunk(&mut accumulated, incoming, 28.00);
+
+        assert_eq!(accumulated.len(), 2);
+        assert_eq!(accumulated[0].text, "今天我们来讨论自适应停顿点软切片的实现原理。");
+        assert_eq!(accumulated[1].text, "首先要识别换气停顿点。");
+        assert_eq!(accumulated[1].start, 28.50);
+        assert_eq!(accumulated[1].end, 33.20);
     }
 }

@@ -165,6 +165,19 @@ pub(crate) fn find_on_path(filename: &str) -> Option<PathBuf> {
     })
 }
 
+pub(crate) fn find_node_runtime() -> Option<PathBuf> {
+    find_on_path("node.exe")
+        .or_else(|| find_on_path("node"))
+        .or_else(|| {
+            let standard_path = PathBuf::from(r"C:\Program Files\nodejs\node.exe");
+            if standard_path.is_file() {
+                Some(standard_path)
+            } else {
+                None
+            }
+        })
+}
+
 pub(crate) fn find_tool(app: &AppHandle, filename: &str) -> Option<PathBuf> {
     candidate_tool_dirs(app)
         .into_iter()
@@ -323,7 +336,11 @@ fn format_duration(seconds: f64) -> String {
 
 fn friendly_process_error(stderr: &str, fallback: &str) -> String {
     let normalized = stderr.to_ascii_lowercase();
-    if normalized.contains("login")
+    if (normalized.contains("sign in") && normalized.contains("bot"))
+        || (normalized.contains("confirm") && normalized.contains("bot"))
+    {
+        "YouTube 触发了防机器人拦截（Sign in to confirm you're not a bot），请尝试在代理软件中切换节点，或在应用数据目录放置 cookies.txt".to_string()
+    } else if normalized.contains("login")
         || normalized.contains("sign in")
         || normalized.contains("cookies")
     {
@@ -383,8 +400,7 @@ pub fn ensure_douyin_cookies(
     let script_path = find_tool(app, "douyin-cookies.mjs")
         .ok_or_else(|| "缺少抖音反爬解析脚本（douyin-cookies.mjs）".to_string())?;
 
-    let node_path = find_on_path("node.exe")
-        .or_else(|| find_on_path("node"))
+    let node_path = find_node_runtime()
         .ok_or_else(|| "未检测到 Node.js 运行时环境，解析抖音链接需要 Node.js 支持".to_string())?;
 
     let output = media_command(&node_path)
@@ -443,6 +459,10 @@ fn execute_probe_command(
         "--dump-single-json",
     ]);
 
+    if let Some(node_path) = find_node_runtime() {
+        command.args(["--js-runtimes", &format!("node:{}", clean_path(&node_path).display())]);
+    }
+
     if let Some(cookie_path) = cookie_file {
         command.arg("--cookies").arg(cookie_path);
         command.arg("--user-agent").arg(BROWSER_USER_AGENT);
@@ -465,6 +485,11 @@ pub fn probe_source(
 
     let mut cookie_file = if platform == "douyin" {
         Some(ensure_douyin_cookies(app, &source_url, false)?)
+    } else if platform == "youtube" {
+        let app_data_dir = app.path().app_data_dir().ok();
+        let yt_cookie = app_data_dir.as_ref().map(|d| d.join("youtube_cookies.txt")).filter(|p| p.is_file());
+        let generic_cookie = app_data_dir.as_ref().map(|d| d.join("cookies.txt")).filter(|p| p.is_file());
+        yt_cookie.or(generic_cookie)
     } else {
         None
     };
@@ -663,11 +688,21 @@ fn run_ytdlp_download(
     .args(["--output", "video.%(ext)s", "--ffmpeg-location"])
     .arg(&ffmpeg_dir_clean);
 
-    command.arg("--user-agent").arg(BROWSER_USER_AGENT);
+    if let Some(node_path) = find_node_runtime() {
+        command.args(["--js-runtimes", &format!("node:{}", clean_path(&node_path).display())]);
+    }
+
     if let Some(cookies) = cookie_file {
         command.arg("--cookies").arg(clean_path(cookies));
+        if source_url.contains("douyin.com") {
+            command.arg("--user-agent").arg(BROWSER_USER_AGENT);
+            command.args(["--add-header", "Referer:https://www.douyin.com/"]);
+        }
+    } else if source_url.contains("douyin.com") {
+        command.arg("--user-agent").arg(BROWSER_USER_AGENT);
         command.args(["--add-header", "Referer:https://www.douyin.com/"]);
     } else if source_url.contains("bilibili.com") || source_url.contains("b23.tv") {
+        command.arg("--user-agent").arg(BROWSER_USER_AGENT);
         command.args(["--add-header", "Referer:https://www.bilibili.com/"]);
     }
 
@@ -769,13 +804,20 @@ fn download_video(
 ) -> Result<PathBuf, String> {
     emit_progress(app, job_id, "download", 0, "正在获取视频流……");
 
-    let is_douyin = extract_supported_url(source_url)
-        .map(|(_, platform)| platform == "douyin")
-        .unwrap_or(false);
+    let platform = extract_supported_url(source_url)
+        .map(|(_, platform)| platform)
+        .unwrap_or("video");
+    let is_douyin = platform == "douyin";
+    let is_youtube = platform == "youtube";
 
     let cookie_file = if is_douyin {
         emit_progress(app, job_id, "download", 2, "正在连接视频平台……");
         Some(ensure_douyin_cookies(app, source_url, false)?)
+    } else if is_youtube {
+        let app_data_dir = app.path().app_data_dir().ok();
+        let yt_cookie = app_data_dir.as_ref().map(|d| d.join("youtube_cookies.txt")).filter(|p| p.is_file());
+        let generic_cookie = app_data_dir.as_ref().map(|d| d.join("cookies.txt")).filter(|p| p.is_file());
+        yt_cookie.or(generic_cookie)
     } else {
         None
     };

@@ -1,4 +1,5 @@
 mod asr;
+pub(crate) mod audio_chunker;
 mod chunk_stitcher;
 mod ctc_alignment_ffi;
 mod embedding;
