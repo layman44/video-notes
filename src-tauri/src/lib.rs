@@ -323,6 +323,54 @@ async fn parse_video_input(input: String, app: AppHandle) -> Result<media::Sourc
 }
 
 #[tauri::command]
+async fn choose_local_media(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<Vec<media::SourcePreview>, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_parent(&window)
+        .set_title("选择本地音视频文件")
+        .add_filter(
+            "音视频文件",
+            &[
+                "mp4", "mkv", "mov", "avi", "webm", "flv", "m4v", "wmv", "ts",
+                "mp3", "m4a", "wav", "aac", "flac", "ogg", "opus", "wma",
+            ],
+        )
+        .add_filter(
+            "视频文件",
+            &["mp4", "mkv", "mov", "avi", "webm", "flv", "m4v", "wmv", "ts"],
+        )
+        .add_filter(
+            "音频文件",
+            &["mp3", "m4a", "wav", "aac", "flac", "ogg", "opus", "wma"],
+        )
+        .pick_files(move |paths| {
+            let _ = tx.send(paths);
+        });
+
+    let selected = rx.await.map_err(|_| "文件选择已取消或中断".to_string())?;
+    let Some(selected) = selected else {
+        return Ok(Vec::new());
+    };
+
+    let tools = media::resolve_media_tools(&app)?;
+    let app_handle = app.clone();
+    let mut previews = Vec::new();
+    for file_path in selected {
+        if let Ok(path_buf) = file_path.into_path() {
+            let path_str = path_buf.to_string_lossy().to_string();
+            if let Ok(preview) = media::probe_source(&app_handle, &tools, &path_str) {
+                previews.push(preview);
+            }
+        }
+    }
+    Ok(previews)
+}
+
+#[tauri::command]
 async fn search_videos(
     keyword: String,
     order: Option<String>,
@@ -1025,6 +1073,7 @@ pub fn run() {
             reset_data_directory,
             export_video_audio,
             parse_video_input,
+            choose_local_media,
             search_videos,
             inspect_media_tools,
             load_video_media,

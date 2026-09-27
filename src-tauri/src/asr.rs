@@ -724,10 +724,6 @@ pub async fn transcribe_job(
         return Err("任务已取消".to_string());
     }
 
-    if result_segments.is_empty() {
-        return Err("语音识别未产生任何有效文本".to_string());
-    }
-
     // `result_segments` are the immutable backend Raw output. No legacy text cleanup or
     // segment consolidation has run before this point.
     let raw_text = result_segments
@@ -761,7 +757,7 @@ pub async fn transcribe_job(
     // English gets a complete CTC word timeline. This is intentionally separate from
     // PauseBoundaryRepair: punctuation decides *whether* a Canonical sentence ends, while
     // CTC supplies the exact clock for that textual candidate.
-    if !is_moss && is_english
+    if !is_moss && is_english && !raw_segments.is_empty()
         && Path::new(&alignment_config.punctuation_runtime_path).is_file()
         && Path::new(&alignment_config.alignment_model_path).is_file()
         && Path::new(&alignment_config.alignment_tokens_path).is_file()
@@ -866,7 +862,7 @@ pub async fn transcribe_job(
     let final_raw_processed_until = final_raw_segments
         .last()
         .map(|segment| segment.end)
-        .unwrap_or(0.0);
+        .unwrap_or(media.duration_seconds);
     let _ = app.emit(
         "asr-snapshot",
         AsrSnapshot {
@@ -1099,7 +1095,7 @@ pub async fn transcribe_job(
         .segments
         .last()
         .map(|segment| segment.end)
-        .unwrap_or(0.0);
+        .unwrap_or(media.duration_seconds);
     let final_snapshot = AsrSnapshot {
         job_id: job_id.to_string(),
         model_id: Some(expected_model_id.to_string()),

@@ -2230,10 +2230,7 @@ async fn run_openasr_moss(
 
     let _ = child.kill().await;
     let _ = child.wait().await;
-    let stderr_text = String::from_utf8_lossy(&stderr_task.await.unwrap_or_default()).into_owned();
-    if segments.is_empty() {
-        return Err(format!("MOSS 未产生有效文本\n{}", tail_text(&stderr_text, 3000)));
-    }
+    let _stderr_text = String::from_utf8_lossy(&stderr_task.await.unwrap_or_default()).into_owned();
 
     if let Some(checkpoint_path) = &request.checkpoint_file {
         let _ = tokio::fs::remove_file(checkpoint_path).await;
@@ -2472,20 +2469,59 @@ fn stitch_openasr_chunk(
     }
 }
 
+fn clean_openasr_text(text: &str) -> String {
+    let stripped = strip_model_tags(text);
+    if stripped.trim().is_empty() {
+        return String::new();
+    }
+
+    // Strip MOSS speaker tags: [S0], [S1], or truncated [S0, [S1
+    static SPEAKER_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let speaker_re = SPEAKER_RE.get_or_init(|| {
+        regex::Regex::new(r"\[S\d+\]?").expect("valid speaker regex")
+    });
+    let after_speaker = speaker_re.replace_all(&stripped, "");
+
+    // Strip MOSS timestamp tags: [0.0], [44.], [2.9, [10], etc.
+    static TS_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let ts_re = TS_RE.get_or_init(|| {
+        regex::Regex::new(r"\[\d+(?:\.\d*)?\]?").expect("valid timestamp regex")
+    });
+    let after_ts = ts_re.replace_all(&after_speaker, "");
+
+    let trimmed = after_ts
+        .trim_matches(|c: char| c.is_whitespace() || c == '[' || c == ']')
+        .trim();
+
+    // Spoken dialogue must contain at least one alphanumeric or ideographic character
+    if !trimmed.chars().any(|c| c.is_alphanumeric()) {
+        return String::new();
+    }
+
+    trimmed.to_string()
+}
+
 fn parse_openasr_segments(body: &str, chunk_index: usize, chunk_duration: f64) -> Vec<TranscriptSegment> {
     if let Ok(value) = serde_json::from_str::<Value>(body) {
         let mut parsed = Vec::new();
         collect_openasr_segment_arrays(&value, &mut parsed, chunk_index);
         if !parsed.is_empty() {
-            return parsed
+            let valid_segments: Vec<TranscriptSegment> = parsed
                 .into_iter()
-                .filter(|segment| !segment.text.trim().is_empty())
-                .map(|mut segment| {
+                .filter_map(|mut segment| {
+                    let cleaned = clean_openasr_text(&segment.text);
+                    if cleaned.is_empty() {
+                        return None;
+                    }
+                    segment.text = cleaned;
                     segment.start = segment.start.max(0.0).min(chunk_duration);
                     segment.end = segment.end.max(segment.start + 0.05).min(chunk_duration.max(segment.start + 0.05));
-                    segment
+                    Some(segment)
                 })
                 .collect();
+            if !valid_segments.is_empty() {
+                return valid_segments;
+            }
         }
         let text = openasr_text_value(&value);
         if !text.trim().is_empty() {
@@ -2493,37 +2529,35 @@ fn parse_openasr_segments(body: &str, chunk_index: usize, chunk_duration: f64) -
             if !tagged.is_empty() {
                 return tagged;
             }
-            return vec![TranscriptSegment {
-                id: format!("openasr-moss-{chunk_index}-0"),
-                start: 0.0,
-                end: chunk_duration,
-                text: strip_model_tags(text.trim()),
-            }];
+            let cleaned = clean_openasr_text(&text);
+            if !cleaned.is_empty() {
+                return vec![TranscriptSegment {
+                    id: format!("openasr-moss-{chunk_index}-0"),
+                    start: 0.0,
+                    end: chunk_duration,
+                    text: cleaned,
+                }];
+            }
         }
+        // Valid JSON was returned, but neither segments nor text contained valid dialogue.
+        // This is a normal silence/no-speech chunk. Return empty list immediately; do NOT fall through!
+        return Vec::new();
     }
     parse_openasr_tagged_text(body, chunk_index, chunk_duration)
 }
 
 fn parse_openasr_tagged_text(body: &str, chunk_index: usize, chunk_duration: f64) -> Vec<TranscriptSegment> {
-    let Ok(pattern) = regex::Regex::new(
-        r"\[([0-9]+(?:\.[0-9]+)?)\](?:\s*\[S\d+\])?\s*([^\[\]]+?)\s*\[([0-9]+(?:\.[0-9]+)?)\]",
-    ) else {
-        return if body.trim().is_empty() {
-            Vec::new()
-        } else {
-            vec![TranscriptSegment {
-                id: format!("openasr-moss-{chunk_index}-0"),
-                start: 0.0,
-                end: chunk_duration,
-                text: strip_model_tags(body.trim()),
-            }]
-        };
-    };
+    static TAGGED_PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let pattern = TAGGED_PATTERN.get_or_init(|| {
+        regex::Regex::new(r"\[([0-9]+(?:\.[0-9]+)?)\](?:\s*\[S\d+\])?\s*([^\[\]]+?)\s*\[([0-9]+(?:\.[0-9]+)?)\]")
+            .expect("valid tagged pattern")
+    });
+
     let mut result = Vec::new();
     for (index, capture) in pattern.captures_iter(body).enumerate() {
         let Some(start) = parse_srt_clock(capture.get(1).map(|value| value.as_str()).unwrap_or("")) else { continue; };
         let Some(end) = parse_srt_clock(capture.get(3).map(|value| value.as_str()).unwrap_or("")) else { continue; };
-        let text = strip_model_tags(capture.get(2).map(|value| value.as_str()).unwrap_or("").trim());
+        let text = clean_openasr_text(capture.get(2).map(|value| value.as_str()).unwrap_or(""));
         if text.is_empty() { continue; }
         result.push(TranscriptSegment {
             id: format!("openasr-moss-{chunk_index}-{index}"),
@@ -2533,12 +2567,19 @@ fn parse_openasr_tagged_text(body: &str, chunk_index: usize, chunk_duration: f64
         });
     }
     if result.is_empty() && !body.trim().is_empty() {
-        result.push(TranscriptSegment {
-            id: format!("openasr-moss-{chunk_index}-0"),
-            start: 0.0,
-            end: chunk_duration,
-            text: strip_model_tags(body.trim()),
-        });
+        let trimmed = body.trim();
+        // Never treat raw JSON structures as subtitle text
+        if serde_json::from_str::<Value>(trimmed).is_err() {
+            let cleaned = clean_openasr_text(trimmed);
+            if !cleaned.is_empty() {
+                result.push(TranscriptSegment {
+                    id: format!("openasr-moss-{chunk_index}-0"),
+                    start: 0.0,
+                    end: chunk_duration,
+                    text: cleaned,
+                });
+            }
+        }
     }
     result
 }
@@ -2571,12 +2612,15 @@ fn collect_openasr_segment_array(array: &[Value], output: &mut Vec<TranscriptSeg
             let end = item.get("end").and_then(Value::as_f64).or_else(|| item.get("end_time").and_then(Value::as_f64));
             let text = item.get("text").and_then(Value::as_str).or_else(|| item.get("transcript").and_then(Value::as_str));
             if let (Some(start), Some(end), Some(text)) = (start, end, text) {
-                output.push(TranscriptSegment {
-                    id: format!("openasr-moss-{chunk_index}-{index}"),
-                    start,
-                    end,
-                    text: strip_model_tags(text.trim()),
-                });
+                let cleaned = clean_openasr_text(text);
+                if !cleaned.is_empty() {
+                    output.push(TranscriptSegment {
+                        id: format!("openasr-moss-{chunk_index}-{index}"),
+                        start,
+                        end,
+                        text: cleaned,
+                    });
+                }
             }
         }
 }
@@ -2809,4 +2853,53 @@ mod transcriber_tests {
         assert_eq!(accumulated[1].start, 28.50);
         assert_eq!(accumulated[1].end, 33.20);
     }
+
+    #[test]
+    fn cleans_openasr_and_moss_hallucinations_and_tags() {
+        use super::clean_openasr_text;
+
+        assert_eq!(clean_openasr_text("[S0"), "");
+        assert_eq!(clean_openasr_text("[S1]"), "");
+        assert_eq!(clean_openasr_text("[44."), "");
+        assert_eq!(clean_openasr_text("[2.9"), "");
+        assert_eq!(clean_openasr_text("[0.0]"), "");
+        assert_eq!(clean_openasr_text("[]"), "");
+        assert_eq!(clean_openasr_text("[...]"), "");
+        assert_eq!(clean_openasr_text("   "), "");
+
+        assert_eq!(clean_openasr_text("[S0] 你好世界"), "你好世界");
+        assert_eq!(clean_openasr_text("[0.0] [S0] 这是一个测试 [2.5]"), "这是一个测试");
+        assert_eq!(clean_openasr_text("[44. 正在录制中"), "正在录制中");
+        assert_eq!(clean_openasr_text("录制结束 [2.9"), "录制结束");
+        assert_eq!(clean_openasr_text("12345"), "12345");
+    }
+
+    #[test]
+    fn parses_openasr_empty_json_and_hallucinations_as_silence() {
+        use super::parse_openasr_segments;
+
+        // 1. 静音/无有效人声时的空结果 JSON，必须返回空切片，禁止泄露 JSON 文本
+        let empty_json = r#"{"text": "", "segments": []}"#;
+        let empty_result = parse_openasr_segments(empty_json, 0, 30.0);
+        assert!(empty_result.is_empty(), "Empty JSON should produce zero segments");
+
+        // 2. 只有截断/幻觉标签的切片，必须过滤为静音
+        let hallucination_json1 = r#"{"text": "[44.", "segments": [{"start": 0.0, "end": 30.0, "text": "[44."}]}"#;
+        assert!(parse_openasr_segments(hallucination_json1, 4, 30.0).is_empty());
+
+        let hallucination_json2 = r#"{"text": "[2.9", "segments": [{"start": 0.0, "end": 21.112, "text": "[2.9"}]}"#;
+        assert!(parse_openasr_segments(hallucination_json2, 7, 21.112).is_empty());
+
+        let hallucination_json3 = r#"{"text": "[S0", "segments": []}"#;
+        assert!(parse_openasr_segments(hallucination_json3, 2, 30.0).is_empty());
+
+        // 3. 正常语音切片正确提取并清洗模型标记
+        let normal_json = r#"{"text": "[S0] 欢迎大家收看", "segments": [{"start": 0.0, "end": 2.5, "text": "[S0] 欢迎大家收看"}]}"#;
+        let normal_result = parse_openasr_segments(normal_json, 0, 30.0);
+        assert_eq!(normal_result.len(), 1);
+        assert_eq!(normal_result[0].text, "欢迎大家收看");
+        assert_eq!(normal_result[0].start, 0.0);
+        assert_eq!(normal_result[0].end, 2.5);
+    }
 }
+

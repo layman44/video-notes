@@ -799,6 +799,10 @@ fn id() -> String {
 
 pub fn normalize_source_key(platform: &str, source: &str) -> String {
     let lower = source.trim().to_ascii_lowercase();
+    if platform.eq_ignore_ascii_case("local") {
+        let clean = lower.replace('\\', "/");
+        return format!("local:{}", clean);
+    }
     if platform.eq_ignore_ascii_case("bilibili") {
         let upper = source.to_ascii_uppercase();
         if let Some(pos) = upper.find("BV") {

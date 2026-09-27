@@ -504,7 +504,7 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
     current.muted = muted;
     const nextDurationMs = Number.isFinite(current.duration) ? current.duration * 1000 : 0;
     setDurationMs(nextDurationMs);
-    setVideoQuality(current.videoHeight > 0 ? current.videoHeight + "p" : "未知清晰度");
+    setVideoQuality(current.videoHeight > 0 ? current.videoHeight + "p" : (video.platform === "local" ? "音频媒体" : "纯音频"));
     setCurrentMs(current.currentTime * 1000);
     lastProgressRenderMs.current = current.currentTime * 1000;
   };
@@ -691,7 +691,7 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
 
   const progressMax = durationMs || 0;
   return <section className="video-detail-page page-frame">
-    <header className="video-detail-header"><button type="button" className="back-button" onClick={onBack}><ArrowLeft size={17} />返回视频库</button><div><h1>{video.title}</h1><p>{video.platform} · {video.duration} · {video.author || "未知作者"}</p></div></header>
+    <header className="video-detail-header"><button type="button" className="back-button" onClick={onBack}><ArrowLeft size={17} />返回视频库</button><div><h1>{video.title}</h1><p>{video.platform === "local" ? "本地媒体" : video.platform} · {video.duration} · {video.author || "未知作者"}</p></div></header>
     {error ? <div className="entry-message"><span className="error-message">{error}</span></div> : null}
     <div className="video-workspace">
       <section className="video-workspace-player-pane" aria-label="视频播放器">
@@ -797,7 +797,7 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
             </button>
           </div>
         </div>
-        <p className="detail-player-caption"><span className="detail-player-status-dot" />本地视频 · {video.platform} · {video.duration}</p>
+        <p className="detail-player-caption"><span className="detail-player-status-dot" />{video.platform === "local" ? "本地媒体" : "本地视频"} · {video.platform === "local" ? "本地媒体" : video.platform} · {video.duration}</p>
         <section className="video-summary-pane" aria-label="视频总结">
           <div className="video-summary-header"><div className="video-summary-title"><List size={17} /><span>视频总结</span></div><div className="video-summary-actions"><button type="button" className="secondary-button compact-button" disabled={action !== null} onClick={() => void organize()}>{action === "organize" ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}{action === "organize" ? (summaryProgress || "正在整理总结...") : (note ? "重新生成总结" : "生成总结")}</button>{note ? <button type="button" className="secondary-button compact-button" onClick={() => void exportNote()}><Download size={15} />导出 Markdown</button> : null}</div></div>
           {note ? <div className="video-summary-content"><p>{note.summary}</p>{note.keyPoints.length ? <ul>{note.keyPoints.map((point) => <li key={point}>{point}</li>)}</ul> : null}</div> : <div className="video-summary-empty"><FileText size={19} /><span>还没有总结</span><small>根据当前校正字幕生成摘要和要点。</small></div>}

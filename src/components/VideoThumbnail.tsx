@@ -1,5 +1,6 @@
 import { Film } from "lucide-react";
 import { useEffect, useState } from "react";
+import { runtime } from "../lib/runtime";
 
 interface VideoThumbnailProps {
   src?: string | null;
@@ -12,11 +13,17 @@ export function VideoThumbnail({ src, className = "", label = "VIDEO" }: VideoTh
   const [imageFailed, setImageFailed] = useState(false);
   useEffect(() => setImageFailed(false), [src]);
 
+  const resolvedSrc = src
+    ? (src.startsWith("http://") || src.startsWith("https://") || src.startsWith("data:")
+        ? src
+        : runtime.localAssetUrl(src))
+    : undefined;
+
   return (
     <span className={`video-thumbnail ${className}`}>
-      {src && !imageFailed ? (
+      {resolvedSrc && !imageFailed ? (
         <img
-          src={src}
+          src={resolvedSrc}
           alt=""
           loading="lazy"
           referrerPolicy="no-referrer"

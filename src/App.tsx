@@ -27,6 +27,7 @@ export default function App() {
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(semanticSearchPreview ? previewVideo : null);
   const [modelReadiness, setModelReadiness] = useState<ModelReadiness | null>(null);
   const [autoPlayOnTranscriptClick, setAutoPlayOnTranscriptClick] = useState(() => loadPlaybackPreferences().autoPlayOnTranscriptClick);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const refreshOverview = useCallback(async () => { const page = await runtime.listVideosPage({ page: 1, pageSize: 4 }); setRecentVideos(page.items); setLibraryTotal(page.total); }, []);
   const refreshQueue = useCallback(async () => { setQueueItems(await runtime.listQueueItems()); }, []);
@@ -61,6 +62,7 @@ export default function App() {
   useEffect(() => { if (!runtime.isDesktop()) return undefined; let active = true; let unlistenQueue: (() => void) | undefined; let unlistenLibrary: (() => void) | undefined; void Promise.all([listen("queue-updated", () => { if (active) void refreshQueue(); }), listen("library-updated", () => { if (active) { setLibraryRevision((value) => value + 1); void refreshOverview(); } })]).then(([queueUnlisten, libraryUnlisten]) => { if (!active) { queueUnlisten(); libraryUnlisten(); return; } unlistenQueue = queueUnlisten; unlistenLibrary = libraryUnlisten; }); return () => { active = false; unlistenQueue?.(); unlistenLibrary?.(); }; }, [refreshOverview, refreshQueue]);
   const enqueue = useCallback(async (sources: EnqueueSourceInput[]) => { const settings = loadAsrSettings(); await runtime.enqueueSources(sources.map((source) => ({ ...source, asrBackend: settings.backend, asrConfigJson: JSON.stringify(settings.moss) }))); await refreshContent(); setActivePage("queue"); }, [refreshContent]);
   const enqueueOne = useCallback((source: SourcePreview) => enqueue([source]), [enqueue]);
+  const handleSearchFromHome = useCallback((query: string) => { setSearchQuery(query); setActivePage("search"); }, []);
   const requeueVideo = useCallback(async (videoId: string) => { const settings = loadAsrSettings(); await runtime.requeueVideo(videoId, settings.backend, JSON.stringify(settings.moss)); await refreshContent(); }, [refreshContent]);
   const openVideo = useCallback((video: Video) => { setSelectedVideo(video); setSelectedVideoId(video.id); setActivePage("video-detail"); }, []);
   const refreshSelectedVideo = useCallback(async () => { if (!selectedVideoId) return; const latest = await runtime.getVideo(selectedVideoId); setSelectedVideo(latest); await refreshOverview(); }, [refreshOverview, selectedVideoId]);
@@ -70,8 +72,8 @@ export default function App() {
     <>
       <ToastContainer />
       <AppShell activePage={activePage} modelReadiness={modelReadiness} onNavigate={setActivePage}>
-        {activePage === "home" ? <HomePage queueItems={queueItems} videos={recentVideos} videoCount={libraryTotal} onEnqueue={enqueueOne} onOpenQueue={() => setActivePage("queue")} onOpenLibrary={() => setActivePage("library")} onOpenVideo={openVideo} /> : null}
-        {activePage === "search" ? <SearchPage queueItems={queueItems} libraryRevision={libraryRevision} onEnqueue={enqueue} onOpenVideo={openVideo} /> : null}
+        {activePage === "home" ? <HomePage queueItems={queueItems} videos={recentVideos} videoCount={libraryTotal} onEnqueue={enqueueOne} onEnqueueBatch={enqueue} onSearch={handleSearchFromHome} onOpenQueue={() => setActivePage("queue")} onOpenLibrary={() => setActivePage("library")} onOpenVideo={openVideo} /> : null}
+        {activePage === "search" ? <SearchPage queueItems={queueItems} libraryRevision={libraryRevision} initialQuery={searchQuery} onEnqueue={enqueue} onOpenVideo={openVideo} /> : null}
         {activePage === "queue" ? <QueuePage items={queueItems} onRefresh={refreshContent} /> : null}
         {activePage === "library" ? <VideoLibraryPage revision={libraryRevision} onOpen={openVideo} onRefresh={refreshOverview} onRequeue={requeueVideo} /> : null}
         {activePage === "models" ? <ModelsPage onStatusChange={setModelReadiness} /> : null}

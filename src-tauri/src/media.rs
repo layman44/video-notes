@@ -262,7 +262,68 @@ fn platform_for_host(host: &str) -> &'static str {
     }
 }
 
+pub const SUPPORTED_VIDEO_EXTS: &[&str] = &[
+    "mp4", "mkv", "mov", "avi", "webm", "flv", "m4v", "wmv", "ts",
+];
+pub const SUPPORTED_AUDIO_EXTS: &[&str] = &[
+    "mp3", "m4a", "wav", "aac", "flac", "ogg", "opus", "wma",
+];
+
+pub fn is_supported_local_media(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    let ext_lower = ext.to_ascii_lowercase();
+    SUPPORTED_VIDEO_EXTS.contains(&ext_lower.as_str())
+        || SUPPORTED_AUDIO_EXTS.contains(&ext_lower.as_str())
+}
+
+pub fn is_audio_only(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    SUPPORTED_AUDIO_EXTS.contains(&ext.to_ascii_lowercase().as_str())
+}
+
+pub fn detect_local_file_path(input: &str) -> Option<PathBuf> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let stripped = trimmed
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .or_else(|| trimmed.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+        .unwrap_or(trimmed)
+        .trim();
+
+    if stripped.starts_with("file://") {
+        if let Ok(url) = Url::parse(stripped) {
+            if let Ok(path) = url.to_file_path() {
+                if is_supported_local_media(&path) {
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    let p = Path::new(stripped);
+    if is_supported_local_media(p) {
+        let clean = p.to_string_lossy().to_string();
+        let clean = clean.strip_prefix(r"\\?\").unwrap_or(&clean);
+        return Some(PathBuf::from(clean));
+    }
+    None
+}
+
 pub fn extract_supported_url(input: &str) -> Result<(String, &'static str), String> {
+    if let Some(local_path) = detect_local_file_path(input) {
+        return Ok((local_path.to_string_lossy().to_string(), "local"));
+    }
+
     for candidate in input.split(|character: char| {
         character.is_whitespace()
             || matches!(
@@ -476,12 +537,71 @@ fn execute_probe_command(
         .map_err(|error| format!("无法启动媒体解析组件：{error}"))
 }
 
+pub fn probe_local_media(tools: &MediaToolPaths, source_path_str: &str) -> Result<SourcePreview, String> {
+    let path = Path::new(source_path_str);
+    if !path.is_file() {
+        return Err(format!("本地文件未找到：{source_path_str}"));
+    }
+    let title = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "本地媒体".to_string());
+
+    let is_audio = is_audio_only(path);
+    let duration_sec = probe_duration(&tools.ffmpeg, path).unwrap_or(0.0);
+    let duration = format_duration(duration_sec);
+    let author = if is_audio { "本地音频".to_string() } else { "本地视频".to_string() };
+
+    Ok(SourcePreview {
+        title,
+        platform: "local".to_string(),
+        duration,
+        source_url: source_path_str.to_string(),
+        author: Some(author),
+        thumbnail_url: None,
+    })
+}
+
+pub fn extract_video_thumbnail(ffmpeg: &Path, video_file: &Path, output_jpg: &Path) -> Result<(), String> {
+    let status = media_command(ffmpeg)
+        .args(["-ss", "00:00:01", "-i"])
+        .arg(video_file)
+        .args(["-vframes", "1", "-q:v", "2", "-y"])
+        .arg(output_jpg)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| e.to_string())?;
+
+    if status.success() && output_jpg.is_file() {
+        return Ok(());
+    }
+
+    let _ = media_command(ffmpeg)
+        .args(["-ss", "00:00:00", "-i"])
+        .arg(video_file)
+        .args(["-vframes", "1", "-q:v", "2", "-y"])
+        .arg(output_jpg)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    Ok(())
+}
+
 pub fn probe_source(
     app: &AppHandle,
     tools: &MediaToolPaths,
     input: &str,
 ) -> Result<SourcePreview, String> {
     let (source_url, platform) = extract_supported_url(input)?;
+
+    if platform == "local" {
+        return probe_local_media(tools, &source_url);
+    }
 
     let mut cookie_file = if platform == "douyin" {
         Some(ensure_douyin_cookies(app, &source_url, false)?)
@@ -1095,7 +1215,7 @@ pub fn prepare_media(
     cancelled: Arc<AtomicBool>,
 ) -> Result<MediaPreparationResult, String> {
     validate_job_id(job_id)?;
-    let (source_url, _) = extract_supported_url(source_url)?;
+    let (source_url, platform) = extract_supported_url(source_url)?;
     let task_dir = app_data_dir.join("tasks").join(job_id);
     let manifest_path = task_dir.join("media.json");
     let cached = if manifest_path.is_file() {
@@ -1126,8 +1246,36 @@ pub fn prepare_media(
     let source_dir = task_dir.join("source");
     let chunks_dir = task_dir.join("chunks");
     fs::create_dir_all(&source_dir).map_err(|error| format!("无法创建任务目录：{error}"))?;
-    let video_file = find_video_file(&source_dir)
-        .or_else(|_| download_video(app, tools, job_id, &source_url, &source_dir, quality, &cancelled))?;
+    let video_file = if let Ok(existing) = find_video_file(&source_dir) {
+        existing
+    } else if platform == "local" {
+        emit_progress(app, job_id, "download", 10, "正在导入本地媒体文件……");
+        let src_path = Path::new(&source_url);
+        if !src_path.is_file() {
+            return Err(format!("本地媒体文件未找到：{source_url}"));
+        }
+        let ext = src_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("mp4")
+            .to_ascii_lowercase();
+        let target_file = source_dir.join(format!("video.{ext}"));
+
+        emit_progress(app, job_id, "download", 30, "正在复制媒体文件到任务空间……");
+        fs::copy(src_path, &target_file)
+            .map_err(|e| format!("复制本地媒体文件失败：{e}"))?;
+
+        if !is_audio_only(src_path) {
+            emit_progress(app, job_id, "download", 90, "正在生成视频封面……");
+            let thumb_path = source_dir.join("video.jpg");
+            let _ = extract_video_thumbnail(&tools.ffmpeg, &target_file, &thumb_path);
+        }
+
+        emit_progress(app, job_id, "download", 100, "本地媒体导入就绪");
+        target_file
+    } else {
+        download_video(app, tools, job_id, &source_url, &source_dir, quality, &cancelled)?
+    };
     if cancelled.load(Ordering::Relaxed) {
         return Err("任务已取消".to_string());
     }
@@ -1227,7 +1375,8 @@ pub fn export_audio(
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_supported_url, format_duration, format_selector_for_quality, parse_percent,
+        detect_local_file_path, extract_supported_url, format_duration,
+        format_selector_for_quality, is_audio_only, is_supported_local_media, parse_percent,
         validate_job_id,
     };
 
@@ -1321,5 +1470,31 @@ mod tests {
         assert!(validate_job_id("job-123_abc").is_ok());
         assert!(validate_job_id("../other-task").is_err());
         assert!(validate_job_id("任务一").is_err());
+    }
+
+    #[test]
+    fn detects_local_supported_media() {
+        let video_temp = tempfile::Builder::new().suffix(".mp4").tempfile().unwrap();
+        let audio_temp = tempfile::Builder::new().suffix(".mp3").tempfile().unwrap();
+        let txt_temp = tempfile::Builder::new().suffix(".txt").tempfile().unwrap();
+
+        assert!(is_supported_local_media(video_temp.path()));
+        assert!(!is_audio_only(video_temp.path()));
+
+        assert!(is_supported_local_media(audio_temp.path()));
+        assert!(is_audio_only(audio_temp.path()));
+
+        assert!(!is_supported_local_media(txt_temp.path()));
+
+        let video_path_str = video_temp.path().to_string_lossy().to_string();
+        let detected = detect_local_file_path(&video_path_str);
+        assert!(detected.is_some());
+
+        let quoted = format!("\"{}\"", video_path_str);
+        assert!(detect_local_file_path(&quoted).is_some());
+
+        let (extracted_url, platform) = extract_supported_url(&video_path_str).unwrap();
+        assert_eq!(platform, "local");
+        assert_eq!(extracted_url, video_path_str);
     }
 }

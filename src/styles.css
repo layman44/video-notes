@@ -372,6 +372,31 @@ select:focus-visible,
   box-shadow: 0 0 0 3px rgba(216, 67, 67, 0.09);
 }
 
+.url-field.is-drag-over {
+  border: 2px dashed var(--accent);
+  background: rgba(29, 95, 242, 0.05);
+  box-shadow: 0 0 0 4px rgba(29, 95, 242, 0.16), 0 8px 24px rgba(29, 95, 242, 0.08);
+  transform: translateY(-1px);
+}
+
+.dropzone-hint {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  pointer-events: none;
+  animation: pulse-drop 1.4s infinite ease-in-out;
+}
+
+@keyframes pulse-drop {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.008); }
+}
+
 .url-field input {
   min-width: 0;
   width: 100%;
@@ -430,9 +455,15 @@ select:focus-visible,
   font-size: 17px;
 }
 
-.clipboard-button {
+.source-actions {
   grid-column: 2;
   justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.clipboard-button {
   padding: 2px 0;
   background: transparent;
   color: var(--accent);
