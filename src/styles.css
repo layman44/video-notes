@@ -2334,6 +2334,95 @@ select:focus-visible,
 }
 
 .detail-player-quality { flex: 0 0 auto; color: rgba(255,255,255,.72); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Video player subtitle overlay */
+.detail-player-subtitles {
+  position: absolute;
+  left: 50%;
+  bottom: 50px;
+  transform: translateX(-50%);
+  width: auto;
+  max-width: 86%;
+  pointer-events: none;
+  z-index: 4;
+  text-align: center;
+  transition: bottom 220ms ease, opacity 200ms ease;
+  user-select: none;
+}
+
+.detail-player.is-controls-hidden .detail-player-subtitles,
+.detail-player-subtitles.controls-hidden {
+  bottom: 18px;
+}
+
+.detail-player-subtitle-bubble {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  max-width: 100%;
+}
+
+.detail-player-subtitle-bubble .subtitle-line.primary {
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 550;
+  line-height: 1.4;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  letter-spacing: 0.01em;
+  word-break: break-word;
+}
+
+.detail-player-subtitle-bubble .subtitle-line.secondary {
+  color: #93c5fd;
+  font-size: 13px;
+  font-weight: 450;
+  line-height: 1.35;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  word-break: break-word;
+}
+
+/* Fullscreen subtitle scaling */
+.video-workspace-player-pane .detail-player:fullscreen .detail-player-subtitles {
+  max-width: 80%;
+  bottom: 64px;
+}
+
+.video-workspace-player-pane .detail-player:fullscreen.is-controls-hidden .detail-player-subtitles {
+  bottom: 30px;
+}
+
+.video-workspace-player-pane .detail-player:fullscreen .detail-player-subtitle-bubble {
+  padding: 8px 20px;
+  border-radius: 10px;
+}
+
+.video-workspace-player-pane .detail-player:fullscreen .detail-player-subtitle-bubble .subtitle-line.primary {
+  font-size: 22px;
+}
+
+.video-workspace-player-pane .detail-player:fullscreen .detail-player-subtitle-bubble .subtitle-line.secondary {
+  font-size: 17px;
+}
+
+/* CC Subtitle button active state in player controls */
+.detail-player-controls button.detail-player-subtitles-btn.is-active {
+  color: var(--accent);
+  background: rgba(29, 95, 242, 0.25);
+}
+
+.export-srt-button {
+  gap: 5px;
+  font-size: 12px;
+  padding: 4px 10px;
+}
 .detail-search {
   display: flex;
   align-items: center;

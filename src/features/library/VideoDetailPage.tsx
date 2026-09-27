@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronDown, ChevronUp, Download, FileText, Languages, LayoutList, List, LoaderCircle, LocateFixed, Maximize2, Minimize2, Pause, Pencil, Play, PlayCircle, RefreshCw, RotateCcw, Save, Search, Sparkles, Trash2, Volume1, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Download, FileText, Languages, LayoutList, List, LoaderCircle, LocateFixed, Maximize2, Minimize2, Pause, Pencil, Play, PlayCircle, RefreshCw, RotateCcw, Save, Search, Sparkles, Subtitles, Trash2, Volume1, Volume2, VolumeX, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
@@ -51,6 +51,38 @@ function segmentAt(segments: TranscriptSegment[], currentMs: number) {
     else high = middle;
   }
   return low > 0 ? segments[low - 1] : null;
+}
+
+function subtitleAt(segments: TranscriptSegment[], currentMs: number): TranscriptSegment | null {
+  const candidate = segmentAt(segments, currentMs);
+  if (!candidate) return null;
+  if (currentMs >= candidate.startMs && currentMs <= candidate.endMs + 300) {
+    return candidate;
+  }
+  return null;
+}
+
+function formatSrtTime(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const millis = Math.floor(Math.max(0, ms) % 1000);
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")},${String(millis).padStart(3, "0")}`;
+}
+
+function generateSrtContent(segments: TranscriptSegment[], mode: "original" | "bilingual"): string {
+  return segments
+    .map((seg, idx) => {
+      const start = formatSrtTime(seg.startMs);
+      const end = formatSrtTime(seg.endMs);
+      let text = seg.text;
+      if (mode === "bilingual" && seg.translatedText?.trim()) {
+        text = `${seg.text}\n${seg.translatedText.trim()}`;
+      }
+      return `${idx + 1}\n${start} --> ${end}\n${text}\n`;
+    })
+    .join("\n");
 }
 
 function EditRow({
@@ -398,6 +430,25 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
   const needsTranslationCount = canTranslate ? segments.filter((segment) => !segment.translatedText?.trim() && !isChineseText(segment.text)).length : 0;
   const remainingTranslationCount = needsTranslationCount;
 
+  const [showSubtitles, setShowSubtitles] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("videonotes_show_subtitles") !== "false";
+    } catch {
+      return true;
+    }
+  });
+  const [activeSubtitle, setActiveSubtitle] = useState<TranscriptSegment | null>(null);
+
+  const toggleSubtitles = useCallback(() => {
+    setShowSubtitles((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("videonotes_show_subtitles", String(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
   const seekToMs = (nextMs: number, shouldPlay = false) => {
     const current = videoRef.current;
     if (!current) return;
@@ -406,6 +457,7 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
     lastProgressRenderMs.current = boundedMs;
     setCurrentMs(boundedMs);
     setActiveSegmentId(segmentAt(segments, boundedMs)?.id ?? null);
+    setActiveSubtitle(subtitleAt(segments, boundedMs));
     if (shouldPlay) void current.play();
   };
 
@@ -490,7 +542,9 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
       setCurrentMs(nextMs);
     }
     const next = segmentAt(segments, nextMs)?.id ?? null;
-    setActiveSegmentId((previous) => previous === next ? previous : next);
+    setActiveSegmentId((previous) => (previous === next ? previous : next));
+    const sub = subtitleAt(segments, nextMs);
+    setActiveSubtitle((previous) => (previous?.id === sub?.id ? previous : sub));
   };
 
   const seekTo = (nextMs: number) => {
@@ -578,6 +632,37 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
       }
     };
   }, []);
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.key === "c" || e.key === "C") {
+        e.preventDefault();
+        toggleSubtitles();
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [toggleSubtitles]);
+
+  const exportSrt = async () => {
+    if (segments.length === 0) return;
+    const srtContent = generateSrtContent(segments, translationMode);
+    const modeSuffix = translationMode === "bilingual" ? ".双语" : "";
+    const defaultFilename = `${video.title.replace(/[\\/:*?"<>|]/g, "_")}${modeSuffix}.srt`;
+    const savedPath = await runtime.exportSubtitles(defaultFilename, srtContent);
+    if (savedPath) {
+      toast.success(`字幕文件已导出至：${savedPath}`);
+    }
+  };
 
   useEffect(() => {
     if (!targetSearchSegmentId || showResultCards) return;
@@ -722,6 +807,20 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
             onTimeUpdate={updatePlayback}
             controls={false}
           />
+          {showSubtitles && activeSubtitle ? (
+            <div className={`detail-player-subtitles ${!controlsVisible && playing ? "controls-hidden" : ""}`}>
+              {translationMode === "bilingual" && activeSubtitle.translatedText?.trim() ? (
+                <div className="detail-player-subtitle-bubble is-bilingual">
+                  <span className="subtitle-line primary">{activeSubtitle.text}</span>
+                  <span className="subtitle-line secondary">{activeSubtitle.translatedText}</span>
+                </div>
+              ) : (
+                <div className="detail-player-subtitle-bubble">
+                  <span className="subtitle-line primary">{activeSubtitle.text}</span>
+                </div>
+              )}
+            </div>
+          ) : null}
           <div
             className={`detail-player-controls ${!controlsVisible && playing ? "is-hidden" : ""}`}
             onClick={(e) => {
@@ -787,6 +886,17 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
               disabled={!durationMs}
             />
             <span className="detail-player-quality" aria-label={"视频清晰度 " + videoQuality}>{videoQuality}</span>
+            {segments.length > 0 ? (
+              <button
+                type="button"
+                className={`detail-player-subtitles-btn ${showSubtitles ? "is-active" : ""}`}
+                onClick={toggleSubtitles}
+                aria-label={showSubtitles ? "关闭画面字幕" : "开启画面字幕"}
+                title={showSubtitles ? "关闭画面字幕 (C)" : "开启画面字幕 (C)"}
+              >
+                <Subtitles size={16} />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => void toggleFullscreen()}
@@ -926,6 +1036,18 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
                 <LocateFixed size={15} />
                 跟随
               </button>
+              {segments.length > 0 ? (
+                <button
+                  type="button"
+                  className="export-srt-button secondary-button compact-button"
+                  onClick={() => void exportSrt()}
+                  title="导出 SRT 字幕文件"
+                  aria-label="导出字幕"
+                >
+                  <Download size={14} />
+                  导出字幕
+                </button>
+              ) : null}
             </div>
           </div>
 

@@ -827,6 +827,36 @@ async fn export_markdown(
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
+#[tauri::command]
+async fn export_subtitles(
+    suggested_filename: String,
+    content: String,
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<Option<String>, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_parent(&window)
+        .set_title("导出字幕文件")
+        .set_file_name(suggested_filename)
+        .add_filter("SRT 字幕 (*.srt)", &["srt"])
+        .add_filter("VTT 字幕 (*.vtt)", &["vtt"])
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+    let selected_file = rx.await.map_err(|_| "文件保存已取消或异常中断".to_string())?;
+    let Some(selected_file) = selected_file else {
+        return Ok(None);
+    };
+    let path = selected_file
+        .into_path()
+        .map_err(|_| "所选位置不是可写入的本地文件".to_string())?;
+    fs::write(&path, content.as_bytes()).map_err(|error| format!("无法保存字幕文件：{error}"))?;
+
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
 // --- Persistent workflow commands -----------------------------------------------------------
 // These are the only commands that create or mutate queue/library state.  The
 // media and ASR functions below are workers used by WorkflowState, not public
@@ -1100,7 +1130,8 @@ pub fn run() {
             organize_video_notes,
             translate_video_transcript,
             load_video_note,
-            export_markdown
+            export_markdown,
+            export_subtitles
         ])
         .run(tauri::generate_context!())
         .expect("failed to run VideoNotes");
