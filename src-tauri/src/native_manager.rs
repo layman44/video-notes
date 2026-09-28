@@ -985,7 +985,6 @@ pub fn dedicated_ffmpeg_dir() -> PathBuf {
 
 async fn ensure_ffmpeg(
     client: &Client,
-    app: &AppHandle,
     channel: &Channel<NativeInstallEvent>,
     index: usize,
     total_items: usize,
@@ -996,22 +995,6 @@ async fn ensure_ffmpeg(
         find_named_file(&dedicated_dir, "ffprobe.exe"),
     ) {
         return Ok((ffmpeg, ffprobe));
-    }
-
-    if let Ok(data_dir) = app.path().app_local_data_dir() {
-        let legacy_candidates = [
-            data_dir.join("models").join("funasr").join("tools").join("ffmpeg"),
-            data_dir.join("native-funasr-gguf").join("tools").join("ffmpeg"),
-            data_dir.join("tools").join("ffmpeg"),
-        ];
-        for dir in &legacy_candidates {
-            if let (Some(ffmpeg), Some(ffprobe)) = (
-                find_named_file(dir, "ffmpeg.exe"),
-                find_named_file(dir, "ffprobe.exe"),
-            ) {
-                return Ok((ffmpeg, ffprobe));
-            }
-        }
     }
 
     tokio::fs::create_dir_all(&dedicated_dir)
@@ -1062,19 +1045,13 @@ async fn ensure_ffmpeg(
     Ok((ffmpeg, ffprobe))
 }
 
-fn auto_paths(app: &AppHandle, root: &Path, legacy: &Path, spec: ModelSpec) -> NativeFunAsrPaths {
+fn auto_paths(app: &AppHandle, root: &Path, _legacy: &Path, spec: ModelSpec) -> NativeFunAsrPaths {
     let runtime_dir = root.join("runtime").join("v0.2.0");
     let models_dir = root.join("models");
     let dedicated_ffmpeg = dedicated_ffmpeg_dir();
-    let ffmpeg_new = root.join("tools").join("ffmpeg");
-    let ffmpeg_legacy = legacy.join("tools").join("ffmpeg");
     let ffmpeg = find_named_file(&dedicated_ffmpeg, "ffmpeg.exe")
-        .or_else(|| find_named_file(&ffmpeg_new, "ffmpeg.exe"))
-        .or_else(|| find_named_file(&ffmpeg_legacy, "ffmpeg.exe"))
         .or_else(|| crate::media::find_tool(app, "ffmpeg.exe"));
     let ffprobe = find_named_file(&dedicated_ffmpeg, "ffprobe.exe")
-        .or_else(|| find_named_file(&ffmpeg_new, "ffprobe.exe"))
-        .or_else(|| find_named_file(&ffmpeg_legacy, "ffprobe.exe"))
         .or_else(|| crate::media::find_tool(app, "ffprobe.exe"));
     let (_, _, variant) = runtime_choice();
     NativeFunAsrPaths {
@@ -1399,7 +1376,6 @@ pub async fn install(
     )?;
     let (ffmpeg, ffprobe) = match ensure_ffmpeg(
         &client,
-        &app,
         &on_event,
         next_index,
         total_items,
