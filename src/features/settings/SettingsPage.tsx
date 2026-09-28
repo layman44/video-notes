@@ -1,4 +1,4 @@
-import { Check, CircleAlert, FolderOpen, LoaderCircle, RotateCcw } from "lucide-react";
+import { Check, CircleAlert, Copy, ExternalLink, FolderOpen, Github, LoaderCircle, Mail, RotateCcw, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { runtime } from "../../lib/runtime";
@@ -39,6 +39,18 @@ export function SettingsPage({
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [asrSettings, setAsrSettings] = useState(loadAsrSettings);
   const [downloadPrefs, setDownloadPrefs] = useState(loadDownloadPreferences);
+  const [copiedEmail, setCopiedEmail] = useState(false);
+
+  const copyEmail = async () => {
+    try {
+      await navigator.clipboard.writeText("yuchao44@qq.com");
+      setCopiedEmail(true);
+      toast.success("已复制联系邮箱到剪贴板: yuchao44@qq.com");
+      setTimeout(() => setCopiedEmail(false), 2000);
+    } catch {
+      toast.error("复制失败，请手动选择复制");
+    }
+  };
 
   const updateAsrBackend = (backend: AsrBackend) => {
     const next = { ...asrSettings, backend };
@@ -266,6 +278,80 @@ export function SettingsPage({
             </p>
           ) : null}
           <p className="data-directory-note">更改目录时会复制现有视频数据，原目录暂不删除；模型文件与视频数据库仍保存在应用内部目录。</p>
+        </section>
+
+        <section className="settings-group about-group">
+          <h2>关于 VideoNotes</h2>
+          <div className="about-card">
+            <div className="about-brand-row">
+              <div className="about-logo-badge">
+                <span className="brand-mark" aria-hidden="true">
+                  <span className="brand-page" />
+                  <span className="brand-play" />
+                </span>
+              </div>
+              <div className="about-brand-info">
+                <div className="about-title-wrap">
+                  <h3 className="about-app-name">VideoNotes</h3>
+                  <span className="about-version-tag">v0.1.50</span>
+                  <span className="about-badge-offline">离线智能优先</span>
+                </div>
+                <p className="about-tagline">
+                  极速离线音视频转录 · 本地大模型结构化笔记整理 · 语义向量智能定位检索
+                </p>
+              </div>
+            </div>
+
+            <div className="about-details-grid">
+              <div className="about-detail-item">
+                <span className="about-detail-label">开发者 / 作者</span>
+                <span className="about-detail-value">layman44</span>
+              </div>
+
+              <div className="about-detail-item">
+                <span className="about-detail-label">联系与反馈邮箱</span>
+                <div className="about-contact-wrap">
+                  <a
+                    href="mailto:yuchao44@qq.com"
+                    className="about-email-link"
+                    title="点击调起本地邮件客户端发送邮件"
+                  >
+                    <Mail size={14} aria-hidden="true" />
+                    <span>yuchao44@qq.com</span>
+                  </a>
+                  <button
+                    type="button"
+                    className={`about-copy-btn ${copiedEmail ? "is-copied" : ""}`}
+                    onClick={() => void copyEmail()}
+                    title="复制邮箱地址到剪贴板"
+                  >
+                    {copiedEmail ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+                    <span>{copiedEmail ? "已复制" : "复制"}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="about-detail-item">
+                <span className="about-detail-label">开源仓库 / Issue</span>
+                <a
+                  href="https://github.com/layman44/video-notes"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="about-external-link"
+                  title="访问 GitHub 源码仓库提交 Issue 或参与交流"
+                >
+                  <Github size={14} aria-hidden="true" />
+                  <span>layman44/video-notes</span>
+                  <ExternalLink size={12} aria-hidden="true" />
+                </a>
+              </div>
+            </div>
+
+            <div className="about-footer-note">
+              <ShieldCheck size={14} aria-hidden="true" />
+              <span>数据与推理均在用户本机闭环进行，永久不设云端回传，全方位保护您的音视频与知识隐私。遇到使用问题或改进建议，欢迎随时邮件交流！</span>
+            </div>
+          </div>
         </section>
       </div>
 
