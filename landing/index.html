@@ -1321,11 +1321,8 @@
         </p>
 
         <div class="tool-cta-group">
-          <a href="#" class="btn-primary-dl">
+          <a href="#" data-dist="exe" class="btn-primary-dl">
             <i class="fa-brands fa-windows"></i> 免费下载 Windows 版 (.exe)
-          </a>
-          <a href="#" class="btn-secondary-dl">
-            <i class="fa-solid fa-file-zipper"></i> 免安装绿色便携版 (.zip)
           </a>
         </div>
       </section>
@@ -1428,8 +1425,7 @@
         <h2>立即开始体验纯本地 VideoNotes</h2>
         <p>无需独立显卡，Windows 10/11 电脑（支持 CPU AVX2 指令集）开箱即用。</p>
         <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
-          <a href="#" class="btn-primary-dl" style="font-size: 1.12rem; padding: 16px 40px;"><i class="fa-brands fa-windows"></i> 免费下载 Windows 安装包</a>
-          <a href="#" class="btn-secondary-dl"><i class="fa-solid fa-file-zipper"></i> 免安装便携版</a>
+          <a href="#" data-dist="exe" class="btn-primary-dl" style="font-size: 1.12rem; padding: 16px 40px;"><i class="fa-brands fa-windows"></i> 免费下载 Windows 安装包</a>
         </div>
       </div>
     </main>
@@ -1450,9 +1446,6 @@
         <div class="tool-cta-group">
           <a href="#" class="btn-primary-dl" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%); box-shadow: 0 0 30px rgba(16, 185, 129, 0.45);">
             <i class="fa-brands fa-windows"></i> 免费下载 Windows 实盘版 (.exe)
-          </a>
-          <a href="#" class="btn-secondary-dl">
-            <i class="fa-solid fa-file-zipper"></i> 免安装绿色便携版 (.zip)
           </a>
         </div>
       </section>
@@ -1558,7 +1551,6 @@
         <p>支持 Windows 10/11，适配各大主流支持 QMT（量化交易客户端）的券商账户。</p>
         <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
           <a href="#" class="btn-primary-dl" style="font-size: 1.12rem; padding: 16px 40px; background: linear-gradient(135deg, #059669 0%, #10b981 100%); box-shadow: 0 0 30px rgba(16, 185, 129, 0.45);"><i class="fa-brands fa-windows"></i> 免费下载 Windows 实盘版</a>
-          <a href="#" class="btn-secondary-dl"><i class="fa-solid fa-file-zipper"></i> 免安装便携版</a>
         </div>
       </div>
     </main>
@@ -1656,6 +1648,31 @@
   </div>
 
   <script>
+    // ============================================================
+    // 分发配置：发布新版本时只需改这里
+    //   exe -> 对应 data-dist="exe" 的按钮
+    // ============================================================
+    const DIST = {
+      version: "0.1.50",
+      exe: "https://dl.example.com/videonotes/VideoNotes_0.1.50_x64-setup.exe"
+    };
+
+    // 把下载地址注入按钮；未提供的渠道自动置灰不可点
+    function applyDownloadLinks() {
+      document.querySelectorAll('[data-dist]').forEach(el => {
+        const url = DIST[el.dataset.dist];
+        if (url) {
+          el.href = url;
+        } else {
+          el.removeAttribute('href');
+          el.style.opacity = '0.45';
+          el.style.pointerEvents = 'none';
+          el.title = '暂未提供';
+        }
+      });
+    }
+    document.addEventListener('DOMContentLoaded', applyDownloadLinks);
+
     // Navigation Router
     function navigateTo(pageId) {
       document.querySelectorAll('.view-page').forEach(page => page.classList.remove('active-view'));
