@@ -1111,6 +1111,40 @@ pub fn run() {
                 model_download_active: AtomicBool::new(false),
                 workflow,
             });
+            // 确保 FFmpeg 独立存放于专属目录 AppData/Local/video-notes/tools/ffmpeg
+            let target_ffmpeg_dir = native_manager::dedicated_ffmpeg_dir();
+            let has_ffmpeg = target_ffmpeg_dir.join("ffmpeg.exe").is_file()
+                || native_manager::find_named_file(&target_ffmpeg_dir, "ffmpeg.exe").is_some();
+            if !has_ffmpeg {
+                if let Ok(data_dir) = app.path().app_local_data_dir() {
+                    let legacy_candidates = [
+                        data_dir.join("native-funasr-gguf").join("tools").join("ffmpeg"),
+                        data_dir.join("models").join("funasr").join("tools").join("ffmpeg"),
+                        data_dir.join("tools").join("ffmpeg"),
+                    ];
+                    for old_dir in legacy_candidates {
+                        if let Some(src_ffmpeg) = native_manager::find_named_file(&old_dir, "ffmpeg.exe") {
+                            if let Some(parent) = src_ffmpeg.parent() {
+                                let _ = fs::create_dir_all(&target_ffmpeg_dir);
+                                if let Ok(entries) = fs::read_dir(parent) {
+                                    for entry in entries.flatten() {
+                                        let path = entry.path();
+                                        if path.is_file() {
+                                            let dst = target_ffmpeg_dir.join(entry.file_name());
+                                            if !dst.exists() {
+                                                let _ = fs::copy(&path, dst);
+                                            }
+                                        }
+                                    }
+                                }
+                                println!("[setup] 已将既有 FFmpeg 无缝就绪至专属目录: {}", target_ffmpeg_dir.display());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
             // Recover queued work after the database/filesystem migration. The
             // scheduler itself verifies reusable media and transcript files.
             app.state::<AppState>().workflow.start_scheduler();

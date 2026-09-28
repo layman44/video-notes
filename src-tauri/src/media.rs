@@ -143,6 +143,12 @@ fn candidate_tool_dirs(app: &AppHandle) -> Vec<PathBuf> {
     if let Some(override_dir) = env::var_os("VIDEO_NOTES_TOOLS_DIR") {
         candidates.push(clean_path(&PathBuf::from(override_dir)));
     }
+    #[cfg(windows)]
+    if let Ok(local_appdata) = env::var("LOCALAPPDATA") {
+        let dedicated_tools = PathBuf::from(&local_appdata).join("video-notes").join("tools");
+        candidates.push(dedicated_tools.join("ffmpeg"));
+        candidates.push(dedicated_tools);
+    }
     if let Ok(resource_dir) = app.path().resource_dir() {
         let clean_res = clean_path(&resource_dir);
         candidates.push(clean_res.join("resources").join("tools"));
@@ -155,8 +161,9 @@ fn candidate_tool_dirs(app: &AppHandle) -> Vec<PathBuf> {
             .join("tools"),
     );
     if let Ok(data_dir) = app.path().app_local_data_dir() {
-        candidates.push(data_dir.join("models").join("funasr").join("tools").join("ffmpeg"));
         candidates.push(data_dir.join("tools").join("ffmpeg"));
+        candidates.push(data_dir.join("models").join("funasr").join("tools").join("ffmpeg"));
+        candidates.push(data_dir.join("native-funasr-gguf").join("tools").join("ffmpeg"));
         candidates.push(data_dir.join("tools"));
     }
     candidates

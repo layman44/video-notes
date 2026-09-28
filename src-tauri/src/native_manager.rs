@@ -194,7 +194,7 @@ fn github_proxy_url(file: &str) -> String {
     format!("https://gh-proxy.com/https://github.com/modelscope/FunASR/releases/download/{RUNTIME_VERSION}/{file}")
 }
 
-fn find_named_file(root: &Path, file_name: &str) -> Option<PathBuf> {
+pub(crate) fn find_named_file(root: &Path, file_name: &str) -> Option<PathBuf> {
     if !root.exists() {
         return None;
     }
@@ -975,28 +975,49 @@ async fn ensure_alignment_model(
     Err(format!("English CTC Small INT8 下载或解压失败：{}", errors.join(" | ")))
 }
 
+pub fn dedicated_ffmpeg_dir() -> PathBuf {
+    #[cfg(windows)]
+    if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
+        return PathBuf::from(local_appdata).join("video-notes").join("tools").join("ffmpeg");
+    }
+    PathBuf::from("tools").join("ffmpeg")
+}
+
 async fn ensure_ffmpeg(
     client: &Client,
-    root: &Path,
-    legacy: &Path,
+    app: &AppHandle,
     channel: &Channel<NativeInstallEvent>,
     index: usize,
     total_items: usize,
 ) -> Result<(PathBuf, PathBuf), String> {
-    let new_dir = root.join("tools").join("ffmpeg");
-    let legacy_dir = legacy.join("tools").join("ffmpeg");
-    for dir in [&new_dir, &legacy_dir] {
-        if let (Some(ffmpeg), Some(ffprobe)) = (
-            find_named_file(dir, "ffmpeg.exe"),
-            find_named_file(dir, "ffprobe.exe"),
-        ) {
-            return Ok((ffmpeg, ffprobe));
+    let dedicated_dir = dedicated_ffmpeg_dir();
+    if let (Some(ffmpeg), Some(ffprobe)) = (
+        find_named_file(&dedicated_dir, "ffmpeg.exe"),
+        find_named_file(&dedicated_dir, "ffprobe.exe"),
+    ) {
+        return Ok((ffmpeg, ffprobe));
+    }
+
+    if let Ok(data_dir) = app.path().app_local_data_dir() {
+        let legacy_candidates = [
+            data_dir.join("models").join("funasr").join("tools").join("ffmpeg"),
+            data_dir.join("native-funasr-gguf").join("tools").join("ffmpeg"),
+            data_dir.join("tools").join("ffmpeg"),
+        ];
+        for dir in &legacy_candidates {
+            if let (Some(ffmpeg), Some(ffprobe)) = (
+                find_named_file(dir, "ffmpeg.exe"),
+                find_named_file(dir, "ffprobe.exe"),
+            ) {
+                return Ok((ffmpeg, ffprobe));
+            }
         }
     }
-    tokio::fs::create_dir_all(&new_dir)
+
+    tokio::fs::create_dir_all(&dedicated_dir)
         .await
-        .map_err(|e| format!("创建 FFmpeg 目录失败：{e}"))?;
-    let zip_path = new_dir.join(FFMPEG_FILE);
+        .map_err(|e| format!("创建专属 FFmpeg 目录失败：{e}"))?;
+    let zip_path = dedicated_dir.join(FFMPEG_FILE);
     let urls = [FFMPEG_MIRROR_URL.to_string(), FFMPEG_URL.to_string()];
     let mut errors = Vec::new();
     let mut downloaded = false;
@@ -1030,26 +1051,31 @@ async fn ensure_ffmpeg(
         return Err(format!("FFmpeg 下载或 ZIP 校验失败：{}", errors.join(" | ")));
     }
     let zip_clone = zip_path.clone();
-    let dir_clone = new_dir.clone();
+    let dir_clone = dedicated_dir.clone();
     tokio::task::spawn_blocking(move || extract_zip_file(&zip_clone, &dir_clone))
         .await
         .map_err(|e| format!("解压 FFmpeg 任务失败：{e}"))??;
-    let ffmpeg = find_named_file(&new_dir, "ffmpeg.exe")
+    let ffmpeg = find_named_file(&dedicated_dir, "ffmpeg.exe")
         .ok_or_else(|| "FFmpeg 已解压，但没有找到 ffmpeg.exe".to_string())?;
-    let ffprobe = find_named_file(&new_dir, "ffprobe.exe")
+    let ffprobe = find_named_file(&dedicated_dir, "ffprobe.exe")
         .ok_or_else(|| "FFmpeg 已解压，但没有找到 ffprobe.exe".to_string())?;
     Ok((ffmpeg, ffprobe))
 }
 
-fn auto_paths(root: &Path, legacy: &Path, spec: ModelSpec) -> NativeFunAsrPaths {
+fn auto_paths(app: &AppHandle, root: &Path, legacy: &Path, spec: ModelSpec) -> NativeFunAsrPaths {
     let runtime_dir = root.join("runtime").join("v0.2.0");
     let models_dir = root.join("models");
+    let dedicated_ffmpeg = dedicated_ffmpeg_dir();
     let ffmpeg_new = root.join("tools").join("ffmpeg");
     let ffmpeg_legacy = legacy.join("tools").join("ffmpeg");
-    let ffmpeg = find_named_file(&ffmpeg_new, "ffmpeg.exe")
-        .or_else(|| find_named_file(&ffmpeg_legacy, "ffmpeg.exe"));
-    let ffprobe = find_named_file(&ffmpeg_new, "ffprobe.exe")
-        .or_else(|| find_named_file(&ffmpeg_legacy, "ffprobe.exe"));
+    let ffmpeg = find_named_file(&dedicated_ffmpeg, "ffmpeg.exe")
+        .or_else(|| find_named_file(&ffmpeg_new, "ffmpeg.exe"))
+        .or_else(|| find_named_file(&ffmpeg_legacy, "ffmpeg.exe"))
+        .or_else(|| crate::media::find_tool(app, "ffmpeg.exe"));
+    let ffprobe = find_named_file(&dedicated_ffmpeg, "ffprobe.exe")
+        .or_else(|| find_named_file(&ffmpeg_new, "ffprobe.exe"))
+        .or_else(|| find_named_file(&ffmpeg_legacy, "ffprobe.exe"))
+        .or_else(|| crate::media::find_tool(app, "ffprobe.exe"));
     let (_, _, variant) = runtime_choice();
     NativeFunAsrPaths {
         runtime_path: find_named_file(&runtime_dir, spec.exe)
@@ -1086,7 +1112,7 @@ pub fn status(app: &AppHandle, request: &NativeModelRequest) -> Result<NativeFun
     let spec = model_spec(&request.model_kind)?;
     let root = install_root(app)?;
     let legacy = legacy_root(app)?;
-    let paths = auto_paths(&root, &legacy, spec);
+    let paths = auto_paths(app, &root, &legacy, spec);
     let runtime_ready = !paths.runtime_path.is_empty() && Path::new(&paths.runtime_path).is_file();
     let llm_ready = Path::new(&paths.model_path).is_file()
         && verify_gguf(Path::new(&paths.model_path)).is_ok();
@@ -1149,7 +1175,6 @@ pub async fn install(
 ) -> Result<NativeFunAsrPaths, String> {
     let spec = model_spec(&request.model_kind)?;
     let root = install_root(&app)?;
-    let legacy = legacy_root(&app)?;
     tokio::fs::create_dir_all(&root)
         .await
         .map_err(|e| format!("创建 FunASR GGUF 安装目录失败：{e}"))?;
@@ -1374,8 +1399,7 @@ pub async fn install(
     )?;
     let (ffmpeg, ffprobe) = match ensure_ffmpeg(
         &client,
-        &root,
-        &legacy,
+        &app,
         &on_event,
         next_index,
         total_items,
