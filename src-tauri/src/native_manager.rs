@@ -164,15 +164,12 @@ fn send(channel: &Channel<NativeInstallEvent>, event: NativeInstallEvent) -> Res
 fn install_root(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_local_data_dir()
-        .map(|p| p.join("native-funasr-gguf"))
+        .map(|p| p.join("models").join("funasr"))
         .map_err(|e| format!("无法获取应用本地数据目录：{e}"))
 }
 
 fn legacy_root(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_local_data_dir()
-        .map(|p| p.join("native-funasr"))
-        .map_err(|e| format!("无法获取应用本地数据目录：{e}"))
+    install_root(app)
 }
 
 fn runtime_choice() -> (&'static str, &'static str, &'static str) {

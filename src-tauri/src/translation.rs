@@ -1,5 +1,5 @@
 use crate::{
-    asr::{self, TranscriptResult},
+    asr::TranscriptResult,
     summary::{self, SummaryModelStatus},
 };
 use serde::{Deserialize, Serialize};
@@ -41,8 +41,8 @@ impl From<SummaryModelStatus> for TranslationModelStatus {
 }
 
 #[allow(dead_code)]
-pub fn models_dir(app_data_dir: &Path) -> PathBuf {
-    asr::models_dir(app_data_dir)
+pub fn models_dir(base_dir: &Path) -> PathBuf {
+    summary::models_dir(base_dir)
 }
 
 #[allow(dead_code)]

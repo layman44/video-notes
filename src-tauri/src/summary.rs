@@ -168,12 +168,12 @@ struct MergeSourceDraft {
     key_points: Vec<String>,
 }
 
-fn models_dir(app_data_dir: &Path) -> PathBuf {
-    asr::models_dir(app_data_dir)
+pub fn models_dir(base_dir: &Path) -> PathBuf {
+    base_dir.join("summary")
 }
 
-fn model_path(app_data_dir: &Path) -> PathBuf {
-    models_dir(app_data_dir).join(MODEL_FILE)
+fn model_path(base_dir: &Path) -> PathBuf {
+    models_dir(base_dir).join(MODEL_FILE)
 }
 
 pub fn model_status(app_data_dir: &Path) -> SummaryModelStatus {

@@ -155,8 +155,7 @@ fn candidate_tool_dirs(app: &AppHandle) -> Vec<PathBuf> {
             .join("tools"),
     );
     if let Ok(data_dir) = app.path().app_local_data_dir() {
-        candidates.push(data_dir.join("native-funasr-gguf").join("tools").join("ffmpeg"));
-        candidates.push(data_dir.join("native-funasr").join("tools").join("ffmpeg"));
+        candidates.push(data_dir.join("models").join("funasr").join("tools").join("ffmpeg"));
         candidates.push(data_dir.join("tools").join("ffmpeg"));
         candidates.push(data_dir.join("tools"));
     }

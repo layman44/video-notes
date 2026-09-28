@@ -68,7 +68,7 @@ fn emit_progress(app: &AppHandle, downloaded: u64, total: Option<u64>, progress:
 pub fn model_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_local_data_dir()
-        .map(|dir| dir.join("openasr").join("moss-transcribe-diarize-q4_k.oasr"))
+        .map(|dir| dir.join("models").join("moss").join("moss-transcribe-diarize-q4_k.oasr"))
         .map_err(|error| format!("无法获取 OpenASR 模型目录：{error}"))
 }
 

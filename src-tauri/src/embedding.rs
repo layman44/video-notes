@@ -3,7 +3,6 @@
 //! Uses native ONNX Runtime via `ort` + `tokenizers` (Qwen3-Embedding-0.6B),
 //! running locally on CPU in tens of milliseconds without external GPU or Python dependencies.
 
-use crate::asr;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use ort::value::Tensor;
@@ -87,12 +86,12 @@ pub fn total_model_bytes() -> u64 {
     MODEL_TARGET_FILES.iter().map(|f| f.expected_size).sum()
 }
 
-pub fn models_dir(app_data_dir: &Path) -> PathBuf {
-    asr::models_dir(app_data_dir)
+pub fn models_dir(base_dir: &Path) -> PathBuf {
+    base_dir.join("embedding")
 }
 
-pub fn model_cache_dir(app_data_dir: &Path) -> PathBuf {
-    models_dir(app_data_dir).join("qwen3-embedding-0.6b")
+pub fn model_cache_dir(base_dir: &Path) -> PathBuf {
+    models_dir(base_dir).join("qwen3-embedding-0.6b")
 }
 
 pub fn model_status(app_data_dir: &Path) -> EmbeddingModelStatus {

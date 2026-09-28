@@ -37,6 +37,7 @@ use tauri_plugin_dialog::DialogExt;
 struct AppState {
     database: Arc<Mutex<Connection>>,
     app_data_dir: PathBuf,
+    models_dir: PathBuf,
     task_data_dir: Arc<Mutex<PathBuf>>,
     model_download_active: AtomicBool,
     workflow: Arc<workflow::WorkflowState>,
@@ -441,7 +442,7 @@ fn delete_moss_model(app: AppHandle, state: State<'_, AppState>) -> Result<(), A
 
 #[tauri::command]
 fn inspect_summary_model(state: State<'_, AppState>) -> summary::SummaryModelStatus {
-    summary::model_status(&state.app_data_dir)
+    summary::model_status(&state.models_dir)
 }
 
 #[tauri::command]
@@ -452,10 +453,10 @@ async fn download_summary_model(
     if state.model_download_active.swap(true, Ordering::Relaxed) {
         return Err(AppError::new("ALREADY_DOWNLOADING", "已有模型正在下载中"));
     }
-    let app_data_dir = state.app_data_dir.clone();
+    let models_dir = state.models_dir.clone();
     let worker_app = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        summary::download_default_model(&worker_app, &app_data_dir)
+        summary::download_default_model(&worker_app, &models_dir)
     })
     .await;
     state.model_download_active.store(false, Ordering::Relaxed);
@@ -467,12 +468,12 @@ fn delete_summary_model(state: State<'_, AppState>) -> Result<(), AppError> {
     if state.model_download_active.load(Ordering::Relaxed) {
         return Err(AppError::new("ALREADY_DOWNLOADING", "模型正在下载，暂时无法删除"));
     }
-    Ok(summary::delete_default_model(&state.app_data_dir)?)
+    Ok(summary::delete_default_model(&state.models_dir)?)
 }
 
 #[tauri::command]
 fn inspect_translation_model(state: State<'_, AppState>) -> translation::TranslationModelStatus {
-    translation::model_status(&state.app_data_dir)
+    translation::model_status(&state.models_dir)
 }
 
 #[tauri::command]
@@ -483,10 +484,10 @@ async fn download_translation_model(
     if state.model_download_active.swap(true, Ordering::Relaxed) {
         return Err(AppError::new("ALREADY_DOWNLOADING", "已有模型正在下载中"));
     }
-    let app_data_dir = state.app_data_dir.clone();
+    let models_dir = state.models_dir.clone();
     let worker_app = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        translation::download_default_model(&worker_app, &app_data_dir)
+        translation::download_default_model(&worker_app, &models_dir)
     })
     .await;
     state.model_download_active.store(false, Ordering::Relaxed);
@@ -498,12 +499,12 @@ fn delete_translation_model(state: State<'_, AppState>) -> Result<(), AppError> 
     if state.model_download_active.load(Ordering::Relaxed) {
         return Err(AppError::new("ALREADY_DOWNLOADING", "模型正在下载，暂时无法删除"));
     }
-    Ok(translation::remove_default_model(&state.app_data_dir).map(|_| ())?)
+    Ok(translation::remove_default_model(&state.models_dir).map(|_| ())?)
 }
 
 #[tauri::command]
 fn inspect_embedding_model(state: State<'_, AppState>) -> embedding::EmbeddingModelStatus {
-    embedding::model_status(&state.app_data_dir)
+    embedding::model_status(&state.models_dir)
 }
 
 #[tauri::command]
@@ -516,16 +517,16 @@ async fn download_embedding_model(
         eprintln!("[lib] 已有模型正在下载中 (ALREADY_DOWNLOADING)");
         return Err(AppError::new("ALREADY_DOWNLOADING", "已有模型正在下载中"));
     }
-    let app_data_dir = state.app_data_dir.clone();
+    let models_dir = state.models_dir.clone();
     let worker_app = app.clone();
-    let result = embedding::download_model(&worker_app, &app_data_dir).await;
+    let result = embedding::download_model(&worker_app, &models_dir).await;
     state.model_download_active.store(false, Ordering::Relaxed);
     match &result {
         Ok(()) => println!("[lib] embedding::download_model 执行成功！"),
         Err(e) => eprintln!("[lib] embedding::download_model 报错: {e}"),
     }
     result.map_err(AppError::failed)?;
-    Ok(embedding::model_status(&state.app_data_dir))
+    Ok(embedding::model_status(&state.models_dir))
 }
 
 #[tauri::command]
@@ -533,12 +534,12 @@ fn delete_embedding_model(state: State<'_, AppState>) -> Result<(), AppError> {
     if state.model_download_active.load(Ordering::Relaxed) {
         return Err(AppError::new("ALREADY_DOWNLOADING", "模型正在下载，暂时无法删除"));
     }
-    embedding::delete_model(&state.app_data_dir).map_err(AppError::failed)
+    embedding::delete_model(&state.models_dir).map_err(AppError::failed)
 }
 
 #[tauri::command]
 fn open_models_directory(state: State<'_, AppState>) -> Result<(), AppError> {
-    let directory = asr::models_dir(&state.app_data_dir);
+    let directory = &state.models_dir;
     fs::create_dir_all(&directory).map_err(|error| format!("无法创建模型目录：{error}"))?;
     #[cfg(windows)]
     {
@@ -570,7 +571,7 @@ async fn semantic_search_transcript(
     state: State<'_, AppState>,
 ) -> Result<semantic_search::SemanticSearchResponse, AppError> {
     media::validate_job_id(&video_id).map_err(AppError::failed)?;
-    let model_data_dir = state.app_data_dir.clone();
+    let model_data_dir = state.models_dir.clone();
     if query.trim().is_empty() {
         let embedding_status = embedding::model_status(&model_data_dir);
         let vector_mode = if embedding_status.installed { "local-embedding" } else { "local-hash" };
@@ -695,7 +696,7 @@ async fn organize_video_notes(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<summary::NoteResult, AppError> {
-    if !summary::model_status(&state.app_data_dir).installed {
+    if !summary::model_status(&state.models_dir).installed {
         return Err(AppError::new(
             "MODEL_NOT_INSTALLED",
             "尚未安装 Qwen3.5 总结模型，请先前往左侧「模型」页面下载安装",
@@ -703,7 +704,7 @@ async fn organize_video_notes(
     }
     let cancelled = state.workflow.enqueue_cancel(&video_id).map_err(AppError::failed)?;
     let workflow = state.workflow.clone();
-    let model_data_dir = state.app_data_dir.clone();
+    let model_data_dir = state.models_dir.clone();
     let task_data_dir = current_task_data_directory(&state)?;
     let worker_task_data_dir = task_data_dir.clone();
     let worker_app = app.clone();
@@ -741,7 +742,7 @@ async fn translate_video_transcript(
 ) -> Result<(), AppError> {
     let force = force.unwrap_or(false);
     println!("[translate] >>> 收到前端翻译指令: video_id={video_id}, force={force}");
-    if !summary::model_status(&state.app_data_dir).installed {
+    if !summary::model_status(&state.models_dir).installed {
         return Err(AppError::new(
             "MODEL_NOT_INSTALLED",
             "尚未安装 Qwen3.5 总结与翻译模型，请先前往左侧「模型」页面下载安装",
@@ -755,7 +756,7 @@ async fn translate_video_transcript(
         }
     };
     let workflow = state.workflow.clone();
-    let model_data_dir = state.app_data_dir.clone();
+    let model_data_dir = state.models_dir.clone();
     let task_data_dir = current_task_data_directory(&state)?;
     let worker_task_data_dir = task_data_dir.clone();
     let worker_app = app.clone();
@@ -1059,6 +1060,8 @@ pub fn run() {
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             fs::create_dir_all(&app_data_dir)?;
+            let models_dir = app.path().app_local_data_dir()?.join("models");
+            fs::create_dir_all(&models_dir)?;
             let task_data_dir = load_task_data_directory(&app_data_dir);
             let database_path = app_data_dir.join("video-notes.db");
             let connection = Connection::open(database_path)
@@ -1072,6 +1075,7 @@ pub fn run() {
             app.manage(AppState {
                 database,
                 app_data_dir,
+                models_dir,
                 task_data_dir,
                 model_download_active: AtomicBool::new(false),
                 workflow,
