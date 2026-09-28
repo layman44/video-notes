@@ -557,6 +557,37 @@ fn open_models_directory(state: State<'_, AppState>) -> Result<(), AppError> {
 }
 
 #[tauri::command]
+fn open_external_url(url: String) -> Result<(), AppError> {
+    if !url.starts_with("http://") && !url.starts_with("https://") && !url.starts_with("mailto:") {
+        return Err(AppError::new("INVALID_URL", "仅允许打开 http/https/mailto 链接"));
+    }
+    #[cfg(windows)]
+    {
+        Command::new("explorer.exe")
+            .arg(&url)
+            .spawn()
+            .map_err(|error| format!("无法打开外部链接：{error}"))?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|error| format!("无法打开外部链接：{error}"))?;
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|error| format!("无法打开外部链接：{error}"))?;
+        Ok(())
+    }
+}
+
+#[tauri::command]
 fn load_video_transcript(
     video_id: String,
     state: State<'_, AppState>,
@@ -1127,6 +1158,7 @@ pub fn run() {
             download_embedding_model,
             delete_embedding_model,
             open_models_directory,
+            open_external_url,
             load_video_transcript,
             semantic_search_transcript,
             update_video_transcript_segment,

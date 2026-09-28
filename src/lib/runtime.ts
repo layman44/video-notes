@@ -73,6 +73,13 @@ export const runtime = {
   async downloadEmbeddingModel(onProgress: (progress: ModelDownloadProgress) => void): Promise<AsrModelStatus> { return this.downloadModel("download_embedding_model", "embedding", onProgress); },
   async deleteEmbeddingModel(): Promise<void> { if (isTauri()) await invoke("delete_embedding_model"); },
   async openModelsDirectory(): Promise<void> { if (isTauri()) await invoke("open_models_directory"); },
+  async openExternalUrl(url: string): Promise<void> {
+    if (isTauri()) {
+      await invoke("open_external_url", { url });
+    } else if (typeof window !== "undefined") {
+      window.open(url, "_blank", "noreferrer,noopener");
+    }
+  },
   async loadTranscript(videoId: string): Promise<TranscriptResult> { return isTauri() ? invoke<TranscriptResult>("load_video_transcript", { videoId }) : isSemanticPreview() ? Promise.resolve(previewTranscript) : unavailable("转录只能在桌面应用中读取"); },
   async semanticSearchTranscript(videoId: string, query: string): Promise<SemanticSearchResponse> {
     if (isTauri()) return invoke<SemanticSearchResponse>("semantic_search_transcript", { videoId, query });

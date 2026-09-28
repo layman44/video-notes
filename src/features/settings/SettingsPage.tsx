@@ -315,6 +315,10 @@ export function SettingsPage({
                     href="mailto:yuchao44@qq.com"
                     className="about-email-link"
                     title="点击调起本地邮件客户端发送邮件"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      void runtime.openExternalUrl("mailto:yuchao44@qq.com");
+                    }}
                   >
                     <Mail size={14} aria-hidden="true" />
                     <span>yuchao44@qq.com</span>
@@ -339,6 +343,10 @@ export function SettingsPage({
                   rel="noreferrer"
                   className="about-external-link"
                   title="访问 GitHub 源码仓库提交 Issue 或参与交流"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void runtime.openExternalUrl("https://github.com/layman44/video-notes");
+                  }}
                 >
                   <Github size={14} aria-hidden="true" />
                   <span>layman44/video-notes</span>
