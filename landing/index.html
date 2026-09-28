@@ -1,15 +1,19 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Vibecoding Studio - 原生高性能与本地优先桌面软件矩阵</title>
-  <meta name="description" content="以 AI 极客心流协同，打造真正自主可控、极致轻量、100% 数据本地化的桌面工业级工具矩阵。涵盖 VideoNotes 视频 AI 笔记、BondPulse 可转债日内量化交易终端、PDF 智能研报工作台等独立桌面工具，零数据上传，永久隐私安全。" />
-  
+  <meta name="description"
+    content="以 AI 极客心流协同，打造真正自主可控、极致轻量、100% 数据本地化的桌面工业级工具矩阵。涵盖 VideoNotes 视频 AI 笔记、BondPulse 可转债日内量化交易终端、PDF 智能研报工作台等独立桌面工具，零数据上传，永久隐私安全。" />
+
   <!-- Premium Fonts: Plus Jakarta Sans & JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+    rel="stylesheet" />
   <!-- FontAwesome 6 Pro-level icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 
@@ -76,16 +80,18 @@
       z-index: 0;
       overflow: hidden;
     }
+
     .grid-lines {
       position: absolute;
       inset: 0;
-      background-image: 
+      background-image:
         linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
         linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
       background-size: 48px 48px;
       mask-image: radial-gradient(ellipse 70% 60% at 50% 12%, #000 40%, transparent 100%);
       -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 12%, #000 40%, transparent 100%);
     }
+
     .aurora-top {
       position: absolute;
       top: -180px;
@@ -96,6 +102,7 @@
       background: var(--glow-hero);
       filter: blur(80px);
     }
+
     .aurora-bottom-right {
       position: absolute;
       bottom: 10%;
@@ -121,6 +128,7 @@
       z-index: 100;
       margin-bottom: 50px;
     }
+
     .navbar {
       display: flex;
       align-items: center;
@@ -133,6 +141,7 @@
       border-radius: 9999px;
       box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.6), var(--glass-gloss);
     }
+
     .brand-logo {
       display: flex;
       align-items: center;
@@ -144,6 +153,7 @@
       cursor: pointer;
       letter-spacing: -0.4px;
     }
+
     .brand-chip-icon {
       width: 32px;
       height: 32px;
@@ -157,12 +167,14 @@
       font-size: 0.95rem;
       box-shadow: 0 0 12px rgba(56, 189, 248, 0.3);
     }
+
     .nav-links {
       display: flex;
       align-items: center;
       gap: 30px;
       list-style: none;
     }
+
     .nav-item {
       color: var(--text-secondary);
       font-size: 0.9rem;
@@ -174,13 +186,18 @@
       gap: 6px;
       transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
-    .nav-item:hover, .nav-item.active {
+
+    .nav-item:hover,
+    .nav-item.active {
       color: var(--blue);
       text-shadow: 0 0 15px rgba(56, 189, 248, 0.5);
     }
 
     /* Product Dropdown */
-    .dropdown { position: relative; }
+    .dropdown {
+      position: relative;
+    }
+
     .dropdown-menu {
       display: none;
       position: absolute;
@@ -190,11 +207,24 @@
       min-width: 310px;
       z-index: 10;
     }
-    .dropdown:hover .dropdown-menu { display: block; animation: dropdownIn 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
-    @keyframes dropdownIn {
-      from { opacity: 0; transform: translateY(8px) scale(0.98); }
-      to { opacity: 1; transform: translateY(0) scale(1); }
+
+    .dropdown:hover .dropdown-menu {
+      display: block;
+      animation: dropdownIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
+
+    @keyframes dropdownIn {
+      from {
+        opacity: 0;
+        transform: translateY(8px) scale(0.98);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
     .dropdown-content {
       background: rgba(13, 18, 30, 0.95);
       backdrop-filter: blur(30px);
@@ -203,6 +233,7 @@
       padding: 10px;
       box-shadow: 0 25px 50px -10px rgba(0, 0, 0, 0.8), var(--glass-gloss);
     }
+
     .dropdown-item {
       display: flex;
       align-items: center;
@@ -214,10 +245,12 @@
       cursor: pointer;
       transition: all 0.15s ease;
     }
+
     .dropdown-item:hover {
       background: rgba(255, 255, 255, 0.06);
       transform: translateX(3px);
     }
+
     .dropdown-icon {
       width: 38px;
       height: 38px;
@@ -243,6 +276,7 @@
       transition: all 0.2s;
       box-shadow: var(--glass-gloss);
     }
+
     .badge-count:hover {
       background: rgba(255, 255, 255, 0.09);
       border-color: var(--blue);
@@ -251,11 +285,25 @@
     }
 
     /* Views */
-    .view-page { display: none; }
-    .view-page.active-view { display: block; animation: pageFade 0.35s cubic-bezier(0.16, 1, 0.3, 1); }
+    .view-page {
+      display: none;
+    }
+
+    .view-page.active-view {
+      display: block;
+      animation: pageFade 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
     @keyframes pageFade {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     /* Hero Section */
@@ -263,6 +311,7 @@
       text-align: center;
       padding: 30px 0 25px;
     }
+
     .hero-pill-badge {
       display: inline-flex;
       align-items: center;
@@ -277,6 +326,7 @@
       margin-bottom: 24px;
       box-shadow: 0 0 20px rgba(56, 189, 248, 0.12), var(--glass-gloss);
     }
+
     .pulse-dot {
       width: 7px;
       height: 7px;
@@ -285,9 +335,19 @@
       box-shadow: 0 0 10px var(--cyan);
       animation: pulseGlow 2s infinite ease-in-out;
     }
+
     @keyframes pulseGlow {
-      0%, 100% { transform: scale(1); opacity: 1; }
-      50% { transform: scale(1.3); opacity: 0.7; }
+
+      0%,
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
+
+      50% {
+        transform: scale(1.3);
+        opacity: 0.7;
+      }
     }
 
     .hub-hero h1 {
@@ -298,11 +358,13 @@
       color: var(--text-white);
       margin-bottom: 20px;
     }
+
     .hub-hero h1 .text-aurora {
       background: linear-gradient(135deg, #ffffff 0%, #38bdf8 40%, #818cf8 80%, #c084fc 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
+
     .hub-hero p {
       font-size: 1.22rem;
       color: var(--text-secondary);
@@ -319,6 +381,7 @@
       flex-wrap: wrap;
       margin-bottom: 48px;
     }
+
     .trust-chip {
       display: flex;
       align-items: center;
@@ -332,6 +395,7 @@
       border-radius: 9999px;
       box-shadow: var(--glass-gloss);
     }
+
     .trust-chip i {
       color: var(--emerald);
       font-size: 0.95rem;
@@ -346,6 +410,7 @@
       gap: 16px;
       align-items: center;
     }
+
     .search-bar-wrap {
       width: 100%;
       background: rgba(13, 18, 30, 0.85);
@@ -360,14 +425,17 @@
       gap: 14px;
       transition: all 0.25s ease;
     }
+
     .search-bar-wrap:focus-within {
       border-color: var(--blue);
       box-shadow: 0 0 25px rgba(56, 189, 248, 0.25), var(--glass-gloss);
     }
+
     .search-bar-wrap i.search-icon {
       font-size: 1.1rem;
       color: var(--blue);
     }
+
     .search-bar-wrap input {
       border: none;
       outline: none;
@@ -377,10 +445,12 @@
       background: transparent;
       font-family: inherit;
     }
+
     .search-bar-wrap input::placeholder {
       color: var(--text-tertiary);
       font-size: 0.92rem;
     }
+
     .search-badge-hint {
       padding: 4px 10px;
       background: rgba(255, 255, 255, 0.05);
@@ -398,6 +468,7 @@
       flex-wrap: wrap;
       justify-content: center;
     }
+
     .tab-pill {
       padding: 8px 20px;
       border-radius: 9999px;
@@ -413,11 +484,13 @@
       gap: 7px;
       box-shadow: var(--glass-gloss);
     }
+
     .tab-pill:hover {
       color: var(--text-white);
       background: rgba(255, 255, 255, 0.08);
       border-color: var(--border-highlight);
     }
+
     .tab-pill.active {
       background: var(--blue);
       color: #06080d;
@@ -433,6 +506,7 @@
       gap: 28px;
       margin-bottom: 95px;
     }
+
     .matrix-card {
       background: var(--bg-surface);
       backdrop-filter: blur(20px);
@@ -449,6 +523,7 @@
       position: relative;
       overflow: hidden;
     }
+
     .matrix-card:hover {
       transform: translateY(-6px);
       background: var(--bg-surface-elevated);
@@ -462,6 +537,7 @@
       justify-content: space-between;
       margin-bottom: 20px;
     }
+
     .tool-icon-wrapper {
       width: 52px;
       height: 52px;
@@ -472,13 +548,48 @@
       font-size: 1.45rem;
       box-shadow: var(--glass-gloss);
     }
-    .icon-video { background: rgba(56, 189, 248, 0.12); color: var(--blue); border: 1px solid rgba(56, 189, 248, 0.3); }
-    .icon-quant { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(52, 211, 153, 0.35); }
-    .icon-pdf { background: rgba(244, 63, 94, 0.12); color: var(--rose); border: 1px solid rgba(244, 63, 94, 0.3); }
-    .icon-exam { background: rgba(245, 158, 11, 0.12); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.3); }
-    .icon-audio { background: rgba(168, 85, 247, 0.12); color: var(--purple); border: 1px solid rgba(168, 85, 247, 0.3); }
-    .icon-ocr { background: rgba(16, 185, 129, 0.12); color: var(--emerald); border: 1px solid rgba(16, 185, 129, 0.3); }
-    .icon-clip { background: rgba(236, 72, 153, 0.12); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.3); }
+
+    .icon-video {
+      background: rgba(56, 189, 248, 0.12);
+      color: var(--blue);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+
+    .icon-quant {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(52, 211, 153, 0.35);
+    }
+
+    .icon-pdf {
+      background: rgba(244, 63, 94, 0.12);
+      color: var(--rose);
+      border: 1px solid rgba(244, 63, 94, 0.3);
+    }
+
+    .icon-exam {
+      background: rgba(245, 158, 11, 0.12);
+      color: var(--amber);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .icon-audio {
+      background: rgba(168, 85, 247, 0.12);
+      color: var(--purple);
+      border: 1px solid rgba(168, 85, 247, 0.3);
+    }
+
+    .icon-ocr {
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--emerald);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .icon-clip {
+      background: rgba(236, 72, 153, 0.12);
+      color: #f472b6;
+      border: 1px solid rgba(236, 72, 153, 0.3);
+    }
 
     .status-capsule {
       font-size: 0.76rem;
@@ -490,9 +601,24 @@
       gap: 6px;
       box-shadow: var(--glass-gloss);
     }
-    .capsule-ready { background: rgba(16, 185, 129, 0.12); color: var(--emerald); border: 1px solid rgba(16, 185, 129, 0.3); }
-    .capsule-beta { background: rgba(56, 189, 248, 0.12); color: var(--blue); border: 1px solid rgba(56, 189, 248, 0.3); }
-    .capsule-dev { background: rgba(255, 255, 255, 0.04); color: #94a3b8; border: 1px solid var(--border-hairline); }
+
+    .capsule-ready {
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--emerald);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .capsule-beta {
+      background: rgba(56, 189, 248, 0.12);
+      color: var(--blue);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+
+    .capsule-dev {
+      background: rgba(255, 255, 255, 0.04);
+      color: #94a3b8;
+      border: 1px solid var(--border-hairline);
+    }
 
     .matrix-card h3 {
       font-size: 1.4rem;
@@ -501,6 +627,7 @@
       margin-bottom: 8px;
       letter-spacing: -0.3px;
     }
+
     .matrix-card p {
       color: var(--text-secondary);
       font-size: 0.94rem;
@@ -522,7 +649,10 @@
       gap: 8px;
       box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
     }
-    .card-preview-strip i { color: var(--blue); }
+
+    .card-preview-strip i {
+      color: var(--blue);
+    }
 
     .matrix-features {
       list-style: none;
@@ -531,6 +661,7 @@
       gap: 9px;
       margin-bottom: 26px;
     }
+
     .matrix-features li {
       font-size: 0.88rem;
       color: #cbd5e1;
@@ -538,6 +669,7 @@
       align-items: center;
       gap: 9px;
     }
+
     .matrix-features li i {
       color: var(--blue);
       font-size: 0.78rem;
@@ -550,6 +682,7 @@
       padding-top: 18px;
       border-top: 1px solid var(--border-hairline);
     }
+
     .btn-card-link {
       font-size: 0.92rem;
       font-weight: 700;
@@ -560,7 +693,10 @@
       gap: 6px;
       transition: gap 0.2s ease;
     }
-    .matrix-card:hover .btn-card-link { gap: 10px; }
+
+    .matrix-card:hover .btn-card-link {
+      gap: 10px;
+    }
 
     .btn-action-sm {
       padding: 7px 16px;
@@ -577,6 +713,7 @@
       transition: all 0.2s;
       box-shadow: var(--glass-gloss);
     }
+
     .btn-action-sm:hover {
       background: var(--blue);
       color: #06080d;
@@ -594,6 +731,7 @@
       overflow: hidden;
       margin-bottom: 90px;
     }
+
     .comparison-head {
       background: rgba(13, 18, 30, 0.9);
       padding: 24px 34px;
@@ -602,27 +740,33 @@
       align-items: center;
       justify-content: space-between;
     }
+
     .comparison-head h3 {
       font-size: 1.3rem;
       font-weight: 800;
       color: var(--text-white);
     }
+
     .comparison-table {
       width: 100%;
       border-collapse: collapse;
     }
-    .comparison-table th, .comparison-table td {
+
+    .comparison-table th,
+    .comparison-table td {
       padding: 18px 34px;
       text-align: left;
       border-bottom: 1px solid var(--border-hairline);
       font-size: 0.95rem;
     }
+
     .comparison-table th {
       color: var(--text-secondary);
       font-weight: 700;
       background: rgba(0, 0, 0, 0.25);
       font-size: 0.9rem;
     }
+
     .comparison-table .col-highlight {
       background: rgba(56, 189, 248, 0.035);
       font-weight: 700;
@@ -634,6 +778,7 @@
       text-align: center;
       padding: 30px 0 35px;
     }
+
     .btn-back-pill {
       display: inline-flex;
       align-items: center;
@@ -650,6 +795,7 @@
       transition: all 0.2s;
       box-shadow: var(--glass-gloss);
     }
+
     .btn-back-pill:hover {
       color: var(--text-white);
       background: rgba(255, 255, 255, 0.1);
@@ -657,6 +803,7 @@
       transform: translateX(-3px);
       box-shadow: 0 0 15px rgba(56, 189, 248, 0.25);
     }
+
     .tool-hero-box h1 {
       font-size: 3.7rem;
       font-weight: 900;
@@ -665,12 +812,14 @@
       margin-bottom: 18px;
       color: var(--text-white);
     }
+
     .tool-hero-box p {
       font-size: 1.22rem;
       color: var(--text-secondary);
       max-width: 780px;
       margin: 0 auto 34px;
     }
+
     .tool-cta-group {
       display: flex;
       justify-content: center;
@@ -678,6 +827,7 @@
       margin-bottom: 45px;
       flex-wrap: wrap;
     }
+
     .btn-primary-dl {
       background: var(--blue);
       color: #06080d;
@@ -692,11 +842,13 @@
       box-shadow: 0 0 30px rgba(56, 189, 248, 0.4), var(--glass-gloss);
       transition: all 0.2s;
     }
+
     .btn-primary-dl:hover {
       background: #7dd3fc;
       transform: translateY(-2px);
       box-shadow: 0 0 40px rgba(56, 189, 248, 0.6);
     }
+
     .btn-secondary-dl {
       background: rgba(255, 255, 255, 0.05);
       color: var(--text-white);
@@ -712,6 +864,7 @@
       transition: all 0.2s;
       box-shadow: var(--glass-gloss);
     }
+
     .btn-secondary-dl:hover {
       background: rgba(255, 255, 255, 0.1);
       border-color: rgba(255, 255, 255, 0.3);
@@ -726,6 +879,7 @@
       overflow: hidden;
       margin-bottom: 85px;
     }
+
     .window-titlebar {
       background: rgba(13, 18, 30, 0.95);
       padding: 13px 22px;
@@ -734,11 +888,30 @@
       align-items: center;
       justify-content: space-between;
     }
-    .window-dots { display: flex; gap: 8px; }
-    .dot-ctrl { width: 11px; height: 11px; border-radius: 50%; }
-    .dot-close { background: #f87171; }
-    .dot-min { background: #fbbf24; }
-    .dot-max { background: #34d399; }
+
+    .window-dots {
+      display: flex;
+      gap: 8px;
+    }
+
+    .dot-ctrl {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+    }
+
+    .dot-close {
+      background: #f87171;
+    }
+
+    .dot-min {
+      background: #fbbf24;
+    }
+
+    .dot-max {
+      background: #34d399;
+    }
+
     .window-title-text {
       font-size: 0.86rem;
       font-weight: 700;
@@ -754,6 +927,7 @@
       grid-template-columns: 1.1fr 1fr;
       min-height: 480px;
     }
+
     .split-pane-left {
       background: #05070c;
       padding: 26px;
@@ -762,6 +936,7 @@
       flex-direction: column;
       gap: 20px;
     }
+
     .video-viewport {
       background: #010307;
       border: 1px solid var(--border-hairline);
@@ -771,8 +946,9 @@
       align-items: center;
       justify-content: center;
       position: relative;
-      box-shadow: inset 0 0 40px rgba(0,0,0,0.9);
+      box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.9);
     }
+
     .play-orb {
       width: 60px;
       height: 60px;
@@ -787,7 +963,10 @@
       box-shadow: 0 0 30px rgba(56, 189, 248, 0.7);
       transition: transform 0.2s;
     }
-    .play-orb:hover { transform: scale(1.1); }
+
+    .play-orb:hover {
+      transform: scale(1.1);
+    }
 
     .waveform-widget {
       background: rgba(13, 18, 30, 0.7);
@@ -796,6 +975,7 @@
       padding: 16px;
       box-shadow: var(--glass-gloss);
     }
+
     .waveform-meta-row {
       display: flex;
       justify-content: space-between;
@@ -805,39 +985,67 @@
       font-family: var(--font-mono);
       margin-bottom: 10px;
     }
+
     .wave-visual-bars {
       display: flex;
       align-items: center;
       gap: 4px;
       height: 36px;
     }
+
     .wave-column {
       flex: 1;
       background: rgba(255, 255, 255, 0.12);
       border-radius: 2px;
       animation: waveEqualize 1.2s infinite ease-in-out alternate;
     }
-    .wave-column.active { background: linear-gradient(180deg, #38bdf8, #818cf8); }
-    @keyframes waveEqualize {
-      0% { height: 18%; }
-      100% { height: 95%; }
+
+    .wave-column.active {
+      background: linear-gradient(180deg, #38bdf8, #818cf8);
     }
-    .wave-column:nth-child(2) { animation-delay: 0.1s; }
-    .wave-column:nth-child(3) { animation-delay: 0.3s; }
-    .wave-column:nth-child(4) { animation-delay: 0.2s; }
-    .wave-column:nth-child(5) { animation-delay: 0.5s; }
-    .wave-column:nth-child(6) { animation-delay: 0.4s; }
+
+    @keyframes waveEqualize {
+      0% {
+        height: 18%;
+      }
+
+      100% {
+        height: 95%;
+      }
+    }
+
+    .wave-column:nth-child(2) {
+      animation-delay: 0.1s;
+    }
+
+    .wave-column:nth-child(3) {
+      animation-delay: 0.3s;
+    }
+
+    .wave-column:nth-child(4) {
+      animation-delay: 0.2s;
+    }
+
+    .wave-column:nth-child(5) {
+      animation-delay: 0.5s;
+    }
+
+    .wave-column:nth-child(6) {
+      animation-delay: 0.4s;
+    }
 
     .split-pane-right {
       background: #080c14;
       display: flex;
       flex-direction: column;
     }
+
     .pane-tabs {
       display: flex;
       border-bottom: 1px solid var(--border-hairline);
       background: rgba(13, 18, 30, 0.6);
     }
+
     .pane-tab {
       padding: 14px 20px;
       font-size: 0.9rem;
@@ -847,11 +1055,13 @@
       border-bottom: 2px solid transparent;
       transition: all 0.2s;
     }
+
     .pane-tab.active {
       color: var(--blue);
       border-bottom-color: var(--blue);
       background: rgba(255, 255, 255, 0.03);
     }
+
     .transcript-flow {
       padding: 22px;
       flex: 1;
@@ -860,6 +1070,7 @@
       flex-direction: column;
       gap: 12px;
     }
+
     .transcript-bubble {
       padding: 14px 16px;
       background: rgba(13, 18, 30, 0.6);
@@ -867,10 +1078,12 @@
       border-radius: 12px;
       box-shadow: var(--glass-gloss);
     }
+
     .transcript-bubble.highlight {
       border-color: rgba(56, 189, 248, 0.35);
       background: rgba(56, 189, 248, 0.07);
     }
+
     .bubble-timestamp {
       font-size: 0.78rem;
       color: var(--blue);
@@ -878,12 +1091,14 @@
       font-weight: 700;
       margin-bottom: 5px;
     }
+
     .bubble-zh {
       font-size: 0.95rem;
       color: var(--text-white);
       font-weight: 600;
       line-height: 1.5;
     }
+
     .bubble-en {
       font-size: 0.86rem;
       color: var(--text-secondary);
@@ -897,6 +1112,7 @@
       gap: 26px;
       margin-bottom: 85px;
     }
+
     .bento-tile {
       background: var(--bg-surface);
       border: 1px solid var(--border-hairline);
@@ -904,7 +1120,11 @@
       padding: 30px;
       box-shadow: var(--shadow-card), var(--glass-gloss);
     }
-    .bento-tile.col-span-2 { grid-column: span 2; }
+
+    .bento-tile.col-span-2 {
+      grid-column: span 2;
+    }
+
     .bento-tile h4 {
       font-size: 1.25rem;
       font-weight: 800;
@@ -914,6 +1134,7 @@
       align-items: center;
       gap: 10px;
     }
+
     .bento-tile p {
       color: var(--text-secondary);
       font-size: 0.95rem;
@@ -931,12 +1152,14 @@
       margin-bottom: 80px;
       box-shadow: 0 25px 50px -10px rgba(0, 0, 0, 0.85), 0 0 35px rgba(56, 189, 248, 0.15), var(--glass-gloss);
     }
+
     .hero-download-banner h2 {
       font-size: 2.7rem;
       font-weight: 900;
       margin-bottom: 14px;
       letter-spacing: -1px;
     }
+
     .hero-download-banner p {
       color: var(--text-secondary);
       font-size: 1.15rem;
@@ -951,6 +1174,7 @@
       padding: 45px 0 35px;
       color: var(--text-secondary);
     }
+
     .footer-inner-clean {
       display: flex;
       align-items: center;
@@ -959,6 +1183,7 @@
       gap: 20px;
       margin-bottom: 24px;
     }
+
     .footer-brand-clean {
       display: flex;
       align-items: center;
@@ -968,11 +1193,13 @@
       color: var(--text-white);
       cursor: pointer;
     }
+
     .footer-nav-clean {
       display: flex;
       align-items: center;
       gap: 28px;
     }
+
     .footer-nav-clean a {
       color: var(--text-secondary);
       text-decoration: none;
@@ -981,9 +1208,11 @@
       cursor: pointer;
       transition: color 0.2s;
     }
+
     .footer-nav-clean a:hover {
       color: var(--blue);
     }
+
     .footer-sub-clean {
       display: flex;
       align-items: center;
@@ -995,6 +1224,7 @@
       font-size: 0.84rem;
       color: var(--text-tertiary);
     }
+
     .footer-badge-pill {
       padding: 4px 10px;
       background: rgba(255, 255, 255, 0.03);
@@ -1005,19 +1235,533 @@
       color: #94a3b8;
     }
 
+    /* Mobile Drawer */
+    .mobile-menu-btn {
+      display: none;
+      background: transparent;
+      border: none;
+      color: var(--text-primary);
+      font-size: 1.25rem;
+      cursor: pointer;
+      padding: 6px 10px;
+      border-radius: 8px;
+      transition: all 0.2s;
+    }
+    .mobile-menu-btn:hover {
+      color: var(--blue);
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .mobile-drawer {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 14px;
+      right: 14px;
+      margin-top: 10px;
+      background: rgba(13, 18, 30, 0.97);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      border: 1px solid var(--border-highlight);
+      border-radius: 18px;
+      padding: 12px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8), var(--glass-gloss);
+      z-index: 105;
+      animation: dropdownIn 0.22s ease-out;
+    }
+    .mobile-drawer.is-open {
+      display: block;
+    }
+    .mobile-drawer-inner {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .mobile-nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      color: var(--text-primary);
+      font-size: 0.92rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .mobile-nav-item:hover, .mobile-nav-item.active {
+      background: rgba(56, 189, 248, 0.12);
+      color: var(--blue);
+    }
+    .nav-right-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .bp-card-box {
+      background: rgba(0, 0, 0, 0.45);
+      border-radius: 12px;
+      padding: 18px;
+      border: 1px solid var(--border-hairline);
+    }
+
+    .vtab-panel {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+    }
+
+    /* Toast Notification */
+    .toast-msg {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: rgba(13, 18, 30, 0.95);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-highlight);
+      color: var(--text-white);
+      padding: 12px 22px;
+      border-radius: 12px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.8), var(--glass-gloss);
+      z-index: 9999;
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
+      opacity: 0;
+      pointer-events: none;
+      max-width: 90vw;
+      text-align: center;
+    }
+
+    .toast-msg.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+      pointer-events: auto;
+    }
+
     @media (max-width: 960px) {
-      .hub-hero h1, .tool-hero-box h1 { font-size: 2.5rem; }
-      .tool-matrix-grid { grid-template-columns: 1fr; }
-      .window-content-split { grid-template-columns: 1fr; }
-      .bento-showcase { grid-template-columns: 1fr; }
-      .bento-tile.col-span-2 { grid-column: span 1; }
-      .nav-links { display: none; }
-      .container { padding: 0 20px; }
-      .footer-inner-clean { flex-direction: column; align-items: flex-start; }
-      .footer-sub-clean { flex-direction: column; align-items: flex-start; }
+      .hub-hero h1,
+      .tool-hero-box h1 {
+        font-size: 2.5rem;
+      }
+
+      .tool-matrix-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .window-content-split {
+        grid-template-columns: 1fr;
+        min-height: auto;
+      }
+
+      .bento-showcase {
+        grid-template-columns: 1fr;
+      }
+
+      .bento-tile.col-span-2 {
+        grid-column: span 1;
+      }
+
+      .nav-links {
+        display: none;
+      }
+
+      .mobile-menu-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .container {
+        padding: 0 20px;
+      }
+
+      .footer-inner-clean {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .footer-sub-clean {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+
+    /* Mobile Phones (<= 640px) */
+    @media (max-width: 640px) {
+      .container {
+        padding: 0 14px;
+      }
+
+      header {
+        top: 10px;
+        margin-bottom: 24px;
+      }
+
+      .navbar {
+        padding: 8px 14px;
+      }
+
+      .brand-logo span {
+        font-size: 1rem;
+      }
+
+      .badge-count {
+        display: none;
+      }
+
+      /* Hero Section */
+      .hub-hero {
+        padding: 14px 0 18px;
+      }
+
+      .hero-pill-badge {
+        font-size: 0.74rem;
+        padding: 5px 12px;
+        margin-bottom: 14px;
+        line-height: 1.35;
+      }
+
+      .hub-hero h1,
+      .tool-hero-box h1 {
+        font-size: 1.85rem;
+        letter-spacing: -0.6px;
+        line-height: 1.24;
+        margin-bottom: 14px;
+      }
+
+      .hub-hero p,
+      .tool-hero-box p {
+        font-size: 0.92rem;
+        line-height: 1.6;
+        margin-bottom: 22px;
+      }
+
+      .hero-trust-bar {
+        gap: 8px;
+        margin-bottom: 28px;
+      }
+
+      .trust-chip {
+        font-size: 0.74rem;
+        padding: 5px 10px;
+      }
+
+      /* Search & Category Filter Slider */
+      .filter-control-center {
+        margin-bottom: 28px;
+      }
+
+      .search-bar-wrap {
+        padding: 8px 14px;
+        border-radius: 14px;
+      }
+
+      .search-badge-hint {
+        display: none;
+      }
+
+      .search-bar-wrap input {
+        font-size: 0.88rem;
+      }
+
+      .filter-tabs-row {
+        width: 100%;
+        display: flex;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        justify-content: flex-start;
+        padding: 2px 0 6px;
+        gap: 6px;
+      }
+
+      .filter-tabs-row::-webkit-scrollbar {
+        display: none;
+      }
+
+      .tab-pill {
+        flex-shrink: 0;
+        font-size: 0.8rem;
+        padding: 6px 14px;
+      }
+
+      /* Tool Matrix Cards */
+      .tool-matrix-grid {
+        gap: 16px;
+        margin-bottom: 45px;
+      }
+
+      .matrix-card {
+        padding: 20px 16px;
+        border-radius: 18px;
+      }
+
+      .matrix-card h3 {
+        font-size: 1.25rem;
+      }
+
+      .matrix-card p {
+        font-size: 0.88rem;
+        margin-bottom: 14px;
+      }
+
+      .card-preview-strip {
+        font-size: 0.74rem;
+        padding: 8px 10px;
+        margin-bottom: 16px;
+      }
+
+      .matrix-features li {
+        font-size: 0.82rem;
+      }
+
+      .matrix-card-footer {
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      /* =======================================================
+         Software Mockup Windows (VideoNotes & BondPulse)
+         ======================================================= */
+      .app-window-frame {
+        border-radius: 16px;
+        margin-bottom: 40px;
+      }
+
+      .window-titlebar {
+        padding: 9px 12px;
+      }
+
+      .window-title-text {
+        font-size: 0.72rem;
+        max-width: calc(100% - 40px);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .window-status-badge {
+        display: none;
+      }
+
+      /* VideoNotes Mockup Specifics */
+      .split-pane-left {
+        padding: 12px !important;
+        border-right: none !important;
+        border-bottom: 1px solid var(--border-hairline) !important;
+        gap: 12px !important;
+      }
+
+      .video-viewport {
+        border-radius: 10px;
+      }
+
+      .play-orb {
+        width: 48px;
+        height: 48px;
+        font-size: 1.15rem;
+      }
+
+      .waveform-widget {
+        padding: 10px;
+        border-radius: 10px;
+      }
+
+      .waveform-meta-row {
+        font-size: 0.68rem;
+        margin-bottom: 6px;
+      }
+
+      .wave-visual-bars {
+        height: 24px;
+      }
+
+      .pane-tabs {
+        display: flex;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }
+
+      .pane-tabs::-webkit-scrollbar {
+        display: none;
+      }
+
+      .pane-tab {
+        flex-shrink: 0;
+        padding: 10px 14px;
+        font-size: 0.78rem;
+        white-space: nowrap;
+      }
+
+      .transcript-flow {
+        padding: 12px;
+        gap: 8px;
+        max-height: 220px;
+      }
+
+      .transcript-bubble {
+        padding: 10px 12px;
+        border-radius: 10px;
+      }
+
+      .bubble-timestamp {
+        font-size: 0.72rem;
+      }
+
+      .bubble-zh {
+        font-size: 0.86rem;
+        line-height: 1.45;
+      }
+
+      .bubble-en {
+        font-size: 0.76rem;
+      }
+
+      /* BondPulse (可转债量化) Mockup Specifics */
+      .bp-box-header {
+        flex-direction: column;
+        align-items: flex-start !important;
+        gap: 4px;
+      }
+
+      .bp-monitor-row {
+        display: grid !important;
+        grid-template-columns: 1fr auto !important;
+        row-gap: 5px !important;
+        column-gap: 8px !important;
+        padding: 8px 10px !important;
+        font-size: 0.76rem !important;
+      }
+
+      .bp-monitor-row .bp-stock {
+        grid-column: 1;
+        font-weight: 700;
+        color: var(--text-white);
+      }
+
+      .bp-monitor-row .bp-pct {
+        grid-column: 2;
+        text-align: right;
+        font-size: 0.82rem;
+      }
+
+      .bp-monitor-row .bp-vol {
+        grid-column: 1;
+        font-size: 0.72rem;
+      }
+
+      .bp-monitor-row .bp-action {
+        grid-column: 2;
+        text-align: right;
+        font-size: 0.72rem;
+      }
+
+      .bp-risk-row {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 3px !important;
+        font-size: 0.78rem !important;
+      }
+
+      .bp-risk-row strong {
+        font-size: 0.84rem !important;
+      }
+
+      .bp-split-right {
+        padding: 12px !important;
+        border-top: 1px solid var(--border-hairline) !important;
+      }
+
+      .bp-card-box {
+        padding: 12px !important;
+      }
+
+      .tool-hero-box {
+        padding: 20px 0 24px;
+      }
+
+      .btn-back-pill {
+        margin-bottom: 16px;
+        font-size: 0.8rem;
+        padding: 6px 14px;
+      }
+
+      .tool-cta-group {
+        margin-bottom: 24px;
+      }
+
+      /* Bento Showcase */
+      .bento-showcase {
+        gap: 14px;
+        margin-bottom: 40px;
+      }
+
+      .bento-tile {
+        padding: 18px 16px;
+        border-radius: 18px;
+      }
+
+      .bento-tile h4 {
+        font-size: 1.1rem;
+      }
+
+      .bento-tile p {
+        font-size: 0.86rem;
+        line-height: 1.55;
+      }
+
+      /* Download Banner */
+      .hero-download-banner {
+        padding: 28px 16px;
+        border-radius: 20px;
+        margin-bottom: 40px;
+      }
+
+      .hero-download-banner h2 {
+        font-size: 1.55rem;
+        letter-spacing: -0.5px;
+      }
+
+      .hero-download-banner p {
+        font-size: 0.88rem;
+        margin-bottom: 18px;
+      }
+
+      .btn-primary-dl {
+        width: 100%;
+        justify-content: center;
+        padding: 13px 18px;
+        font-size: 0.94rem;
+        border-radius: 12px;
+      }
+
+      /* Footer */
+      footer {
+        padding: 28px 0 20px;
+      }
+
+      .footer-nav-clean {
+        flex-wrap: wrap;
+        gap: 14px;
+      }
+
+      .footer-sub-clean {
+        font-size: 0.76rem;
+      }
     }
   </style>
 </head>
+
 <body>
 
   <!-- Viewport Ambient Lights -->
@@ -1085,16 +1829,44 @@
               </div>
             </div>
           </li>
-          <li><a class="nav-item" href="https://github.com/layman44" target="_blank"><i class="fa-brands fa-github"></i> 开源与支持</a></li>
+          <li><a class="nav-item" href="https://github.com/layman44" target="_blank"><i class="fa-brands fa-github"></i>
+              开源与支持</a></li>
         </ul>
 
-        <!-- Right Badge -->
-        <div>
+        <!-- Right Controls: Badge + Mobile Hamburger -->
+        <div class="nav-right-actions">
           <span class="badge-count" onclick="navigateTo('hub')">
             <i class="fa-solid fa-layer-group" style="color: var(--blue);"></i> 7 款独立工具
           </span>
+          <button class="mobile-menu-btn" type="button" onclick="toggleMobileMenu()" aria-label="打开菜单">
+            <i class="fa-solid fa-bars" id="mobileMenuIcon"></i>
+          </button>
         </div>
       </nav>
+
+      <!-- Mobile Nav Drawer -->
+      <div id="mobile-nav-drawer" class="mobile-drawer">
+        <div class="mobile-drawer-inner">
+          <a class="mobile-nav-item active" onclick="navMobile('hub')">
+            <i class="fa-solid fa-house" style="color: var(--blue);"></i> 首页
+          </a>
+          <a class="mobile-nav-item" onclick="navMobile('videonotes')">
+            <i class="fa-solid fa-film" style="color: #38bdf8;"></i> VideoNotes (视频 AI 笔记)
+          </a>
+          <a class="mobile-nav-item" onclick="navMobile('bondpulse')">
+            <i class="fa-solid fa-chart-line" style="color: #34d399;"></i> BondPulse (可转债量化)
+          </a>
+          <a class="mobile-nav-item" onclick="navMobile('pdfnotes')">
+            <i class="fa-solid fa-file-pdf" style="color: #fb7185;"></i> PDF AI Studio (研报问答)
+          </a>
+          <a class="mobile-nav-item" onclick="navMobile('exampaper')">
+            <i class="fa-solid fa-graduation-cap" style="color: #fbbf24;"></i> ExamPaper AI (试卷切题)
+          </a>
+          <a class="mobile-nav-item" href="https://github.com/layman44" target="_blank">
+            <i class="fa-brands fa-github"></i> 开源与支持
+          </a>
+        </div>
+      </div>
     </header>
 
     <!-- ==================================================== -->
@@ -1107,7 +1879,7 @@
           <span class="pulse-dot"></span>
           <i class="fa-solid fa-bolt-lightning"></i> 开箱即用 · 简单好用 · 100% 本地隐私安全
         </div>
-        <h1>简单好用、开箱即得的 <span class="text-aurora">本地桌面工具箱</span></h1>
+        <h1>简单好用、开箱即得的 <span class="text-aurora">本地桌面软件</span></h1>
         <p>
           开箱即用，无需复杂配置。基于 100% 本地运行与智能协同，助您轻松搞定视频学习笔记、可转债辅助交易、文档文献阅读与日常办公学习提效。
         </p>
@@ -1123,15 +1895,21 @@
         <div class="filter-control-center">
           <div class="search-bar-wrap">
             <i class="fa-solid fa-magnifying-glass search-icon"></i>
-            <input type="text" placeholder="快速检索工具与功能（如：视频转写、可转债量化、QMT、PDF 问答、试卷切题、音频降噪、公式识别...）" oninput="searchTools(this.value)" />
+            <input type="text" placeholder="快速检索工具与功能（如：视频转写、可转债量化、QMT、PDF 问答、试卷切题、音频降噪、公式识别...）"
+              oninput="searchTools(this.value)" />
             <span class="search-badge-hint"><i class="fa-solid fa-bolt"></i> 实时过滤</span>
           </div>
           <div class="filter-tabs-row">
-            <div class="tab-pill active" onclick="filterCategory('all', this)"><i class="fa-solid fa-layer-group"></i> 全部工具 (7)</div>
-            <div class="tab-pill" onclick="filterCategory('media', this)"><i class="fa-solid fa-film"></i> AI 音视频 (3)</div>
-            <div class="tab-pill" onclick="filterCategory('quant', this)"><i class="fa-solid fa-chart-line"></i> 金融量化 (1)</div>
-            <div class="tab-pill" onclick="filterCategory('doc', this)"><i class="fa-solid fa-file-lines"></i> 文档研报 (1)</div>
-            <div class="tab-pill" onclick="filterCategory('study', this)"><i class="fa-solid fa-graduation-cap"></i> 学习备考 (2)</div>
+            <div class="tab-pill active" onclick="filterCategory('all', this)"><i class="fa-solid fa-layer-group"></i>
+              全部工具 (7)</div>
+            <div class="tab-pill" onclick="filterCategory('media', this)"><i class="fa-solid fa-film"></i> AI 音视频 (3)
+            </div>
+            <div class="tab-pill" onclick="filterCategory('quant', this)"><i class="fa-solid fa-chart-line"></i> 金融量化
+              (1)</div>
+            <div class="tab-pill" onclick="filterCategory('doc', this)"><i class="fa-solid fa-file-lines"></i> 文档研报 (1)
+            </div>
+            <div class="tab-pill" onclick="filterCategory('study', this)"><i class="fa-solid fa-graduation-cap"></i>
+              学习备考 (2)</div>
           </div>
         </div>
       </section>
@@ -1147,7 +1925,7 @@
             </div>
             <h3>VideoNotes</h3>
             <p>音视频 AI 笔记与转写工具。内置 Fun-ASR 本地大模型与标点对齐，单机稳定生成结构化时间轴笔记与双语对照。</p>
-            
+
             <div class="card-preview-strip">
               <i class="fa-solid fa-microchip"></i> CPU AVX2 优化 · Fun-ASR GGUF · Sherpa 标点
             </div>
@@ -1173,7 +1951,7 @@
             </div>
             <h3>BondPulse</h3>
             <p>可转债极速日内量化交易终端。基于 QMT 本地直连，全市场秒级放量突破捕捉，闭环自动交易与毫秒级硬核风控。</p>
-            
+
             <div class="card-preview-strip">
               <i class="fa-solid fa-shield-halved"></i> 本地 QMT 直连 · 零云端中转 · 本地 SQLite 审计
             </div>
@@ -1199,7 +1977,7 @@
             </div>
             <h3>PDF AI Studio</h3>
             <p>本地文献研报智能工作台。支持长文档离线问答、复杂双栏扫描件 OCR 识别、嵌套表格提取为 Excel。</p>
-            
+
             <div class="card-preview-strip">
               <i class="fa-solid fa-microchip"></i> 轻量嵌入向量模型 · CPU 离线建立语义索引
             </div>
@@ -1212,7 +1990,8 @@
           </div>
           <div class="matrix-card-footer">
             <span class="btn-card-link">进入专属详情页 <i class="fa-solid fa-arrow-right"></i></span>
-            <span class="btn-action-sm" style="border-color: rgba(244,63,94,0.35);"><i class="fa-regular fa-bell"></i> 预约内测</span>
+            <span class="btn-action-sm" style="border-color: rgba(244,63,94,0.35);"><i class="fa-regular fa-bell"></i>
+              预约内测</span>
           </div>
         </div>
 
@@ -1225,7 +2004,7 @@
             </div>
             <h3>ExamPaper AI</h3>
             <p>试卷与错题智能解析系统。自动试卷版面切题、手写笔迹消除还原空白卷、公式 LaTeX 化与错题本生成。</p>
-            
+
             <div class="card-preview-strip">
               <i class="fa-solid fa-microchip"></i> CPU 快速版面分析 · 字迹剥离 · LaTeX 识别
             </div>
@@ -1238,7 +2017,8 @@
           </div>
           <div class="matrix-card-footer">
             <span class="btn-card-link">进入专属详情页 <i class="fa-solid fa-arrow-right"></i></span>
-            <span class="btn-action-sm" style="border-color: rgba(245,158,11,0.35);"><i class="fa-regular fa-bell"></i> 关注进度</span>
+            <span class="btn-action-sm" style="border-color: rgba(245,158,11,0.35);"><i class="fa-regular fa-bell"></i>
+              关注进度</span>
           </div>
         </div>
 
@@ -1259,7 +2039,8 @@
           </div>
           <div class="matrix-card-footer">
             <span style="color: var(--text-tertiary); font-size: 0.88rem; font-weight: 600;">敬请期待</span>
-            <span style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 6px;">Roadmap</span>
+            <span
+              style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 6px;">Roadmap</span>
           </div>
         </div>
 
@@ -1280,7 +2061,8 @@
           </div>
           <div class="matrix-card-footer">
             <span style="color: var(--text-tertiary); font-size: 0.88rem; font-weight: 600;">敬请期待</span>
-            <span style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 6px;">Roadmap</span>
+            <span
+              style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 6px;">Roadmap</span>
           </div>
         </div>
 
@@ -1301,7 +2083,8 @@
           </div>
           <div class="matrix-card-footer">
             <span style="color: var(--text-tertiary); font-size: 0.88rem; font-weight: 600;">敬请期待</span>
-            <span style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 6px;">Roadmap</span>
+            <span
+              style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 6px;">Roadmap</span>
           </div>
         </div>
       </section>
@@ -1338,7 +2121,7 @@
           <div class="window-title-text">
             <i class="fa-solid fa-film"></i> Keynote_Speech_2026.mp4 (CPU 离线转写完成)
           </div>
-          <div style="font-size: 0.8rem; color: var(--emerald); font-weight: 700;">
+          <div class="window-status-badge" style="font-size: 0.8rem; color: var(--emerald); font-weight: 700;">
             <i class="fa-solid fa-circle-check"></i> 100% 离线运行 · 适配 CPU 运行
           </div>
         </div>
@@ -1372,28 +2155,63 @@
 
           <div class="split-pane-right">
             <div class="pane-tabs">
-              <div class="pane-tab active"><i class="fa-solid fa-list"></i> 时间轴转写 (带标点)</div>
-              <div class="pane-tab"><i class="fa-solid fa-wand-magic-sparkles"></i> AI 结构化总结</div>
-              <div class="pane-tab"><i class="fa-brands fa-markdown"></i> Markdown 预览</div>
+              <div class="pane-tab active" onclick="switchVideoTab(0, this)"><i class="fa-solid fa-list"></i> 时间轴转写 (带标点)</div>
+              <div class="pane-tab" onclick="switchVideoTab(1, this)"><i class="fa-solid fa-wand-magic-sparkles"></i> AI 结构化总结</div>
+              <div class="pane-tab" onclick="switchVideoTab(2, this)"><i class="fa-brands fa-markdown"></i> Markdown 预览</div>
             </div>
 
-            <div class="transcript-flow">
-              <div class="transcript-bubble highlight">
-                <div class="bubble-timestamp">00:03.20 - 00:08.50 · 讲者 A</div>
-                <div class="bubble-zh">今天我们重点讨论如何在纯本地环境下，利用 CPU 与量化模型完成高质量的语音转写。</div>
-                <div class="bubble-en">Today we focus on achieving reliable offline ASR on CPU.</div>
-              </div>
+            <div id="vtab-0" class="vtab-panel">
+              <div class="transcript-flow">
+                <div class="transcript-bubble highlight">
+                  <div class="bubble-timestamp">00:03.20 - 00:08.50 · 讲者 A</div>
+                  <div class="bubble-zh">今天我们重点讨论如何在纯本地环境下，利用 CPU 与量化模型完成高质量的语音转写。</div>
+                  <div class="bubble-en">Today we focus on achieving reliable offline ASR on CPU.</div>
+                </div>
 
-              <div class="transcript-bubble">
-                <div class="bubble-timestamp">00:08.65 - 00:15.10 · 讲者 A</div>
-                <div class="bubble-zh">相比依赖独立显卡或云端 API，直接适配 CPU，运行稳定，而且完全无需担心隐私泄露或断网。</div>
-                <div class="bubble-en">Optimized for CPU, accessible with zero privacy risks.</div>
-              </div>
+                <div class="transcript-bubble">
+                  <div class="bubble-timestamp">00:08.65 - 00:15.10 · 讲者 A</div>
+                  <div class="bubble-zh">相比依赖独立显卡或云端 API，直接适配 CPU，运行稳定，而且完全无需担心隐私泄露或断网。</div>
+                  <div class="bubble-en">Optimized for CPU, accessible with zero privacy risks.</div>
+                </div>
 
-              <div class="transcript-bubble">
-                <div class="bubble-timestamp">00:15.30 - 00:22.40 · 讲者 B</div>
-                <div class="bubble-zh">同时我们配合 Sherpa 标点切分与 CTC 对齐，自动给每一句话补全标点符号并对齐时间戳。</div>
-                <div class="bubble-en">With Sherpa punctuation and CTC alignment, sentences are accurately punctuated and aligned.</div>
+                <div class="transcript-bubble">
+                  <div class="bubble-timestamp">00:15.30 - 00:22.40 · 讲者 B</div>
+                  <div class="bubble-zh">同时我们配合 Sherpa 标点切分与 CTC 对齐，自动给每一句话补全标点符号并对齐时间戳。</div>
+                  <div class="bubble-en">With Sherpa punctuation and CTC alignment, sentences are accurately punctuated
+                    and aligned.</div>
+                </div>
+              </div>
+            </div>
+
+            <div id="vtab-1" class="vtab-panel" style="display: none;">
+              <div class="transcript-flow">
+                <div class="transcript-bubble highlight" style="border-left: 3px solid var(--blue);">
+                  <div class="bubble-timestamp"><i class="fa-solid fa-wand-magic-sparkles"></i> 核心观点提取</div>
+                  <div class="bubble-zh">纯本地 ASR 方案已完全成熟，基于 Fun-ASR + llama.cpp 原生编译引擎，可在普通笔记本 CPU 上实现高效离线转写。</div>
+                </div>
+                <div class="transcript-bubble" style="border-left: 3px solid var(--emerald);">
+                  <div class="bubble-timestamp"><i class="fa-solid fa-list-check"></i> 行动清单 (Action Items)</div>
+                  <div class="bubble-zh" style="font-size: 0.88rem; line-height: 1.6;">
+                    1. 默认启用 Sherpa 标点恢复，避免断句模糊；<br />
+                    2. 采用 FSMN-VAD 静音切片，降低长音频内存占用；<br />
+                    3. 自动生成双语对照时间戳并导出标准 SRT / Markdown。
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="vtab-2" class="vtab-panel" style="display: none;">
+              <div class="transcript-flow" style="font-family: var(--font-mono); font-size: 0.82rem; color: #cbd5e1; line-height: 1.65;">
+                <div style="background: rgba(13, 18, 30, 0.7); padding: 14px; border-radius: 10px; border: 1px solid var(--border-hairline);">
+                  <span style="color: var(--blue);"># Keynote Speech 2026</span><br /><br />
+                  <span style="color: var(--emerald);">## 1. 核心技术栈</span><br />
+                  - Fun-ASR-Nano (GGUF)<br />
+                  - Sherpa-ONNX Punctuation<br />
+                  - FSMN-VAD 16kHz<br /><br />
+                  <span style="color: var(--amber);">## 2. 纪要摘要</span><br />
+                  - 离线隐私保护：100% 本地运算<br />
+                  - 算力要求：仅需 CPU AVX2 指令集
+                </div>
               </div>
             </div>
           </div>
@@ -1404,7 +2222,8 @@
       <div class="bento-showcase">
         <div class="bento-tile col-span-2">
           <h4><i class="fa-solid fa-microchip" style="color: var(--blue);"></i> Fun-ASR-Nano CPU 优化引擎</h4>
-          <p>内置量化版 Qwen3 0.6B 与 F16 语音特征编码器，基于优化版 llama.cpp C++ 原生引擎，充分调用 CPU AVX2/FMA 多核心指令集，通过 CPU 即可稳定完成转写（若配备 GPU 也可自动调用加速）。</p>
+          <p>内置量化版 Qwen3 0.6B 与 F16 语音特征编码器，基于优化版 llama.cpp C++ 原生引擎，充分调用 CPU AVX2/FMA 多核心指令集，通过 CPU 即可稳定完成转写（若配备 GPU
+            也可自动调用加速）。</p>
         </div>
         <div class="bento-tile">
           <h4><i class="fa-solid fa-align-left" style="color: var(--emerald);"></i> Sherpa-ONNX 标点对齐</h4>
@@ -1425,7 +2244,8 @@
         <h2>立即开始体验纯本地 VideoNotes</h2>
         <p>无需独立显卡，Windows 10/11 电脑（支持 CPU AVX2 指令集）开箱即用。</p>
         <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
-          <a href="#" data-dist="exe" class="btn-primary-dl" style="font-size: 1.12rem; padding: 16px 40px;"><i class="fa-brands fa-windows"></i> 免费下载 Windows 安装包</a>
+          <a href="#" data-dist="exe" class="btn-primary-dl" style="font-size: 1.12rem; padding: 16px 40px;"><i
+              class="fa-brands fa-windows"></i> 免费下载 Windows 安装包</a>
         </div>
       </div>
     </main>
@@ -1444,7 +2264,8 @@
         </p>
 
         <div class="tool-cta-group">
-          <a href="#" class="btn-primary-dl" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%); box-shadow: 0 0 30px rgba(16, 185, 129, 0.45);">
+          <a href="#" class="btn-primary-dl"
+            style="background: linear-gradient(135deg, #059669 0%, #10b981 100%); box-shadow: 0 0 30px rgba(16, 185, 129, 0.45);">
             <i class="fa-brands fa-windows"></i> 免费下载 Windows 实盘版 (.exe)
           </a>
         </div>
@@ -1461,61 +2282,72 @@
           <div class="window-title-text">
             <i class="fa-solid fa-chart-line"></i> BondPulse v0.1.38 - [实盘状态] QMT 端口已连接 · 沪深转债池实时监控中
           </div>
-          <div style="font-size: 0.8rem; color: #34d399; font-weight: 700;">
+          <div class="window-status-badge" style="font-size: 0.8rem; color: #34d399; font-weight: 700;">
             <i class="fa-solid fa-shield-halved"></i> 100% 本地直连券商 · 零云端中转
           </div>
         </div>
 
         <div class="window-content-split">
           <div class="split-pane-left">
-            <div style="background: rgba(0, 0, 0, 0.45); border-radius: 12px; padding: 18px; border: 1px solid var(--border-hairline);">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
-                <span style="font-size: 0.86rem; font-weight: 700; color: var(--text-white);"><i class="fa-solid fa-radar" style="color: #34d399;"></i> 异常放量捕捉池 (实时秒级扫描)</span>
-                <span style="font-size: 0.74rem; color: #34d399; background: rgba(16, 185, 129, 0.12); padding: 2px 8px; border-radius: 4px;">沪深 400+ 可转债全覆盖</span>
+            <div class="bp-card-box">
+              <div class="bp-box-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+                <span style="font-size: 0.86rem; font-weight: 700; color: var(--text-white);"><i
+                    class="fa-solid fa-radar" style="color: #34d399;"></i> 异常放量捕捉池 (实时秒级扫描)</span>
+                <span
+                  style="font-size: 0.74rem; color: #34d399; background: rgba(16, 185, 129, 0.12); padding: 2px 8px; border-radius: 4px;">沪深
+                  400+ 可转债全覆盖</span>
               </div>
-              <div style="display: flex; flex-direction: column; gap: 8px; font-family: var(--font-mono); font-size: 0.82rem;">
-                <div style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255, 255, 255, 0.04); border-radius: 6px; border-left: 3px solid #34d399;">
-                  <span>128144 某转债</span>
-                  <span style="color: #f43f5e; font-weight: 700;">+3.86%</span>
-                  <span style="color: #38bdf8;">放量 4.5x</span>
-                  <span style="color: #34d399;">[已触发买入] 100 张</span>
+              <div
+                style="display: flex; flex-direction: column; gap: 8px; font-family: var(--font-mono); font-size: 0.82rem;">
+                <div class="bp-monitor-row"
+                  style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255, 255, 255, 0.04); border-radius: 6px; border-left: 3px solid #34d399;">
+                  <span class="bp-stock">128144 某转债</span>
+                  <span class="bp-pct" style="color: #f43f5e; font-weight: 700;">+3.86%</span>
+                  <span class="bp-vol" style="color: #38bdf8;">放量 4.5x</span>
+                  <span class="bp-action" style="color: #34d399;">[已触发买入] 100 张</span>
                 </div>
-                <div style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255, 255, 255, 0.02); border-radius: 6px; border-left: 3px solid rgba(56, 189, 248, 0.5);">
-                  <span>113642 某转债</span>
-                  <span style="color: #f43f5e; font-weight: 700;">+1.92%</span>
-                  <span style="color: #38bdf8;">放量 2.8x</span>
-                  <span style="color: var(--amber);">[多帧确认中...]</span>
+                <div class="bp-monitor-row"
+                  style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255, 255, 255, 0.02); border-radius: 6px; border-left: 3px solid rgba(56, 189, 248, 0.5);">
+                  <span class="bp-stock">113642 某转债</span>
+                  <span class="bp-pct" style="color: #f43f5e; font-weight: 700;">+1.92%</span>
+                  <span class="bp-vol" style="color: #38bdf8;">放量 2.8x</span>
+                  <span class="bp-action" style="color: var(--amber);">[多帧确认中...]</span>
                 </div>
-                <div style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255, 255, 255, 0.02); border-radius: 6px; border-left: 3px solid var(--border-hairline);">
-                  <span>123188 某转债</span>
-                  <span style="color: #34d399; font-weight: 700;">-0.45%</span>
-                  <span style="color: var(--text-tertiary);">放量 1.0x</span>
-                  <span style="color: var(--text-secondary);">池内观察</span>
+                <div class="bp-monitor-row"
+                  style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255, 255, 255, 0.02); border-radius: 6px; border-left: 3px solid var(--border-hairline);">
+                  <span class="bp-stock">123188 某转债</span>
+                  <span class="bp-pct" style="color: #34d399; font-weight: 700;">-0.45%</span>
+                  <span class="bp-vol" style="color: var(--text-tertiary);">放量 1.0x</span>
+                  <span class="bp-action" style="color: var(--text-secondary);">池内观察</span>
                 </div>
               </div>
             </div>
           </div>
 
-          <div class="split-pane-right">
-            <div style="background: rgba(0, 0, 0, 0.45); border-radius: 12px; padding: 18px; border: 1px solid var(--border-hairline);">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
-                <span style="font-size: 0.86rem; font-weight: 700; color: var(--text-white);"><i class="fa-solid fa-lock" style="color: var(--amber);"></i> 持仓保护与风控闭环</span>
+          <div class="split-pane-right bp-split-right">
+            <div class="bp-card-box">
+              <div class="bp-box-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+                <span style="font-size: 0.86rem; font-weight: 700; color: var(--text-white);"><i
+                    class="fa-solid fa-lock" style="color: var(--amber);"></i> 持仓保护与风控闭环</span>
                 <span style="font-size: 0.74rem; color: var(--text-secondary);">本地 SQLite 毫秒审计</span>
               </div>
               <div style="display: flex; flex-direction: column; gap: 10px; font-size: 0.84rem;">
-                <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; border-bottom: 1px solid var(--border-hairline);">
+                <div class="bp-risk-row"
+                  style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; border-bottom: 1px solid var(--border-hairline);">
                   <span style="color: var(--text-secondary);">当前在管持仓</span>
                   <strong style="color: var(--text-white);">128144 · 100 张</strong>
                 </div>
-                <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; border-bottom: 1px solid var(--border-hairline);">
+                <div class="bp-risk-row"
+                  style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; border-bottom: 1px solid var(--border-hairline);">
                   <span style="color: var(--text-secondary);">动态浮动盈亏</span>
                   <strong style="color: #f43f5e; font-family: var(--font-mono);">+1.42% (止盈追踪线: +1.80%)</strong>
                 </div>
-                <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; border-bottom: 1px solid var(--border-hairline);">
+                <div class="bp-risk-row"
+                  style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; border-bottom: 1px solid var(--border-hairline);">
                   <span style="color: var(--text-secondary);">硬核止损保护线</span>
                   <strong style="color: #38bdf8; font-family: var(--font-mono);">-0.80% (触碰自动市价平仓)</strong>
                 </div>
-                <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div class="bp-risk-row" style="display: flex; justify-content: space-between; align-items: center;">
                   <span style="color: var(--text-secondary);">日终强制清仓</span>
                   <strong style="color: #34d399; font-family: var(--font-mono);">14:55:00 自动清仓不留隔夜</strong>
                 </div>
@@ -1550,7 +2382,9 @@
         <h2>立即开启专业可转债量化自动化交易</h2>
         <p>支持 Windows 10/11，适配各大主流支持 QMT（量化交易客户端）的券商账户。</p>
         <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
-          <a href="#" class="btn-primary-dl" style="font-size: 1.12rem; padding: 16px 40px; background: linear-gradient(135deg, #059669 0%, #10b981 100%); box-shadow: 0 0 30px rgba(16, 185, 129, 0.45);"><i class="fa-brands fa-windows"></i> 免费下载 Windows 实盘版</a>
+          <a href="#" class="btn-primary-dl"
+            style="font-size: 1.12rem; padding: 16px 40px; background: linear-gradient(135deg, #059669 0%, #10b981 100%); box-shadow: 0 0 30px rgba(16, 185, 129, 0.45);"><i
+              class="fa-brands fa-windows"></i> 免费下载 Windows 实盘版</a>
         </div>
       </div>
     </main>
@@ -1569,7 +2403,8 @@
         </p>
 
         <div class="tool-cta-group">
-          <a href="#" class="btn-primary-dl" style="background: var(--rose); box-shadow: 0 0 30px rgba(244, 63, 94, 0.45);">
+          <a href="#" class="btn-primary-dl"
+            style="background: var(--rose); box-shadow: 0 0 30px rgba(244, 63, 94, 0.45);">
             <i class="fa-regular fa-bell"></i> 预约封闭内测资格
           </a>
         </div>
@@ -1601,7 +2436,8 @@
         </p>
 
         <div class="tool-cta-group">
-          <a href="#" class="btn-primary-dl" style="background: var(--amber); color: #06080d; box-shadow: 0 0 30px rgba(245, 158, 11, 0.45);">
+          <a href="#" class="btn-primary-dl"
+            style="background: var(--amber); color: #06080d; box-shadow: 0 0 30px rgba(245, 158, 11, 0.45);">
             <i class="fa-regular fa-bell"></i> 关注开发进度与获取尝鲜版
           </a>
         </div>
@@ -1623,7 +2459,8 @@
     <footer>
       <div class="footer-inner-clean">
         <div class="footer-brand-clean" onclick="navigateTo('hub')">
-          <div class="brand-chip-icon" style="width: 28px; height: 28px; font-size: 0.85rem;"><i class="fa-solid fa-bolt-lightning"></i></div>
+          <div class="brand-chip-icon" style="width: 28px; height: 28px; font-size: 0.85rem;"><i
+              class="fa-solid fa-bolt-lightning"></i></div>
           <span>Vibecoding Studio</span>
         </div>
         <div class="footer-nav-clean">
@@ -1657,12 +2494,44 @@
       exe: `https://dl.miniqmt.top/videonotes/VideoNotes_${DIST_VERSION}_x64-setup.exe`
     };
 
-    // 把下载地址注入按钮；未提供的渠道自动置灰不可点
+    // Toast 浮动提示通知
+    function showToast(msg, icon = 'fa-circle-check') {
+      let toast = document.getElementById('global-toast');
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'global-toast';
+        toast.className = 'toast-msg';
+        document.body.appendChild(toast);
+      }
+      toast.innerHTML = `<i class="fa-solid ${icon}" style="color: var(--blue);"></i> <span>${msg}</span>`;
+      toast.classList.add('show');
+      clearTimeout(toast._timer);
+      toast._timer = setTimeout(() => {
+        toast.classList.remove('show');
+      }, 3400);
+    }
+
+    // 把下载地址注入按钮；移动端点击时自动复制直链并弹窗友好提示
     function applyDownloadLinks() {
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
+
       document.querySelectorAll('[data-dist]').forEach(el => {
         const url = DIST[el.dataset.dist];
         if (url) {
           el.href = url;
+          if (isMobile) {
+            el.addEventListener('click', () => {
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url).then(() => {
+                  showToast('已复制 Windows 安装包官方直链！建议在电脑端打开下载', 'fa-copy');
+                }).catch(() => {
+                  showToast('检测到手机端访问，建议在电脑端下载体验', 'fa-laptop');
+                });
+              } else {
+                showToast('检测到手机端访问，建议在电脑端下载体验', 'fa-laptop');
+              }
+            });
+          }
         } else {
           el.removeAttribute('href');
           el.style.opacity = '0.45';
@@ -1673,7 +2542,47 @@
     }
     document.addEventListener('DOMContentLoaded', applyDownloadLinks);
 
-    // Navigation Router
+    // 移动端汉堡抽屉菜单切换
+    function toggleMobileMenu() {
+      const drawer = document.getElementById('mobile-nav-drawer');
+      const icon = document.getElementById('mobileMenuIcon');
+      if (!drawer) return;
+      const isOpen = drawer.classList.toggle('is-open');
+      if (icon) {
+        if (isOpen) {
+          icon.classList.remove('fa-bars');
+          icon.classList.add('fa-xmark');
+        } else {
+          icon.classList.remove('fa-xmark');
+          icon.classList.add('fa-bars');
+        }
+      }
+    }
+
+    // 移动端点击导航项
+    function navMobile(pageId) {
+      navigateTo(pageId);
+      const drawer = document.getElementById('mobile-nav-drawer');
+      const icon = document.getElementById('mobileMenuIcon');
+      if (drawer) drawer.classList.remove('is-open');
+      if (icon) {
+        icon.classList.remove('fa-xmark');
+        icon.classList.add('fa-bars');
+      }
+    }
+
+    // 点击外部区域自动收起移动端抽屉
+    document.addEventListener('click', (e) => {
+      const drawer = document.getElementById('mobile-nav-drawer');
+      const btn = document.querySelector('.mobile-menu-btn');
+      if (drawer && drawer.classList.contains('is-open')) {
+        if (!drawer.contains(e.target) && !btn.contains(e.target)) {
+          toggleMobileMenu();
+        }
+      }
+    });
+
+    // Navigation Router 路由切换
     function navigateTo(pageId) {
       document.querySelectorAll('.view-page').forEach(page => page.classList.remove('active-view'));
       const target = document.getElementById('view-' + pageId);
@@ -1682,10 +2591,31 @@
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
 
-      // Update active state in nav
+      // 同步桌面端导航高亮
       document.querySelectorAll('.nav-links a').forEach(a => a.classList.remove('active'));
       const navItem = document.getElementById('nav-' + pageId);
       if (navItem) navItem.classList.add('active');
+
+      // 同步移动端抽屉导航高亮
+      document.querySelectorAll('.mobile-nav-item').forEach(item => {
+        item.classList.remove('active');
+        const clickAttr = item.getAttribute('onclick');
+        if (clickAttr && clickAttr.includes(`'${pageId}'`)) {
+          item.classList.add('active');
+        }
+      });
+    }
+
+    // VideoNotes 模拟窗口 Tab 切换
+    function switchVideoTab(index, tabEl) {
+      document.querySelectorAll('.pane-tabs .pane-tab').forEach(t => t.classList.remove('active'));
+      if (tabEl) tabEl.classList.add('active');
+      for (let i = 0; i < 3; i++) {
+        const panel = document.getElementById('vtab-' + i);
+        if (panel) {
+          panel.style.display = (i === index) ? 'flex' : 'none';
+        }
+      }
     }
 
     // Filter tools in Hub
@@ -1731,4 +2661,5 @@
     }
   </script>
 </body>
+
 </html>
