@@ -319,7 +319,7 @@ select:focus-visible,
 }
 
 .home-page {
-  padding-top: clamp(36px, 5vh, 56px);
+  padding-top: 48px;
   padding-bottom: 36px;
   overflow: hidden;
 }
@@ -328,16 +328,16 @@ select:focus-visible,
 .page-header h1 {
   margin: 0;
   color: var(--text);
-  font-size: clamp(30px, 2.6vw, 38px);
-  font-weight: 690;
-  line-height: 1.18;
-  letter-spacing: -1.1px;
+  font-size: 32px;
+  font-weight: 680;
+  line-height: 1.2;
+  letter-spacing: -0.8px;
 }
 
 .home-intro p {
   margin: 10px 0 0;
   color: var(--muted);
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.5;
 }
 
@@ -617,8 +617,8 @@ select:focus-visible,
 }
 
 .standard-page {
-  padding-top: 70px;
-  padding-bottom: 64px;
+  padding-top: 48px;
+  padding-bottom: 48px;
 }
 
 .page-header {
@@ -626,17 +626,18 @@ select:focus-visible,
   align-items: flex-start;
   justify-content: space-between;
   gap: 32px;
-  margin-bottom: 48px;
+  margin-bottom: 32px;
 }
 
 .page-header h1 {
-  font-size: 34px;
+  font-size: 32px;
 }
 
 .page-header p {
-  margin: 13px 0 0;
+  margin: 10px 0 0;
   color: var(--muted);
-  font-size: 15px;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .secondary-button {
@@ -1894,8 +1895,6 @@ select:focus-visible,
 @media (max-width: 560px) { .library-card-list { grid-template-columns: 1fr; }.library-filter-bar { flex-wrap: wrap; }.library-search-field { max-width: none; flex-basis: 100%; } }
 
 @media (max-height: 720px) and (min-width: 701px) {
-  .home-page { padding-top: 24px; padding-bottom: 18px; }
-  .home-intro h1 { font-size: 28px; }
   .home-intro p { margin-top: 6px; font-size: 13px; }
   .source-entry { margin-top: 16px; }
   .url-field, .parse-button { height: 54px; }
