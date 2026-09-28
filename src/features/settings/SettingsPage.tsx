@@ -293,7 +293,7 @@ export function SettingsPage({
               <div className="about-brand-info">
                 <div className="about-title-wrap">
                   <h3 className="about-app-name">VideoNotes</h3>
-                  <span className="about-version-tag">v0.1.50</span>
+                  <span className="about-version-tag">v0.1.51</span>
                   <span className="about-badge-offline">离线智能优先</span>
                 </div>
                 <p className="about-tagline">
