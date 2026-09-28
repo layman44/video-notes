@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CPU-AI-HUB - 适配 CPU 的纯本地 AI 桌面工具矩阵</title>
-  <meta name="description" content="无需昂贵独立显卡，直接通过 CPU 即可稳定离线运行。涵盖视频 AI 笔记、PDF 智能工作台、试卷智能切题解析等独立桌面工具，零数据上传，永久隐私安全。" />
+  <title>Vibecoding Studio - 原生高性能与本地优先桌面软件矩阵</title>
+  <meta name="description" content="以 AI 极客心流协同，打造真正自主可控、极致轻量、100% 数据本地化的桌面工业级工具矩阵。涵盖 VideoNotes 视频 AI 笔记、BondPulse 可转债日内量化交易终端、PDF 智能研报工作台等独立桌面工具，零数据上传，永久隐私安全。" />
   
   <!-- Premium Fonts: Plus Jakarta Sans & JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -473,6 +473,7 @@
       box-shadow: var(--glass-gloss);
     }
     .icon-video { background: rgba(56, 189, 248, 0.12); color: var(--blue); border: 1px solid rgba(56, 189, 248, 0.3); }
+    .icon-quant { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(52, 211, 153, 0.35); }
     .icon-pdf { background: rgba(244, 63, 94, 0.12); color: var(--rose); border: 1px solid rgba(244, 63, 94, 0.3); }
     .icon-exam { background: rgba(245, 158, 11, 0.12); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.3); }
     .icon-audio { background: rgba(168, 85, 247, 0.12); color: var(--purple); border: 1px solid rgba(168, 85, 247, 0.3); }
@@ -1032,8 +1033,8 @@
       <nav class="navbar">
         <!-- Logo -->
         <a class="brand-logo" onclick="navigateTo('hub')">
-          <div class="brand-chip-icon"><i class="fa-solid fa-microchip"></i></div>
-          <span>CPU-AI-HUB</span>
+          <div class="brand-chip-icon"><i class="fa-solid fa-bolt-lightning"></i></div>
+          <span>Vibecoding Studio</span>
         </a>
 
         <!-- Links -->
@@ -1052,6 +1053,15 @@
                   <div>
                     <div style="font-weight: 700; font-size: 0.92rem;">VideoNotes</div>
                     <div style="font-size: 0.78rem; color: var(--text-secondary);">视频 AI 笔记与本地 ASR 转写</div>
+                  </div>
+                </div>
+                <div class="dropdown-item" onclick="navigateTo('bondpulse')">
+                  <div class="dropdown-icon" style="background: rgba(16, 185, 129, 0.15); color: #34d399;">
+                    <i class="fa-solid fa-chart-line"></i>
+                  </div>
+                  <div>
+                    <div style="font-weight: 700; font-size: 0.92rem;">BondPulse</div>
+                    <div style="font-size: 0.78rem; color: var(--text-secondary);">可转债极速日内量化交易终端</div>
                   </div>
                 </div>
                 <div class="dropdown-item" onclick="navigateTo('pdfnotes')">
@@ -1075,52 +1085,53 @@
               </div>
             </div>
           </li>
-          <li><a class="nav-item" onclick="navigateTo('hub')#offline-philosophy">CPU 离线理念</a></li>
-          <li><a class="nav-item" href="https://github.com" target="_blank"><i class="fa-brands fa-github"></i> 开源文档</a></li>
+          <li><a class="nav-item" onclick="navigateTo('hub')#offline-philosophy">工坊理念</a></li>
+          <li><a class="nav-item" href="https://github.com/layman44" target="_blank"><i class="fa-brands fa-github"></i> 开源与支持</a></li>
         </ul>
 
         <!-- Right Badge -->
         <div>
           <span class="badge-count" onclick="navigateTo('hub')">
-            <i class="fa-solid fa-layer-group" style="color: var(--blue);"></i> 6 款独立工具
+            <i class="fa-solid fa-layer-group" style="color: var(--blue);"></i> 7 款独立工具
           </span>
         </div>
       </nav>
     </header>
 
     <!-- ==================================================== -->
-    <!-- VIEW 1: CPU-AI-HUB 首页 (Tool Marketplace Hub)       -->
+    <!-- VIEW 1: Vibecoding Studio 首页 (Tool Marketplace Hub)  -->
     <!-- ==================================================== -->
     <main id="view-hub" class="view-page active-view">
       <!-- Hub Hero -->
       <section class="hub-hero">
         <div class="hero-pill-badge">
           <span class="pulse-dot"></span>
-          <i class="fa-solid fa-microchip"></i> 无需独立显卡 · 直接通过 CPU 稳定运行
+          <i class="fa-solid fa-bolt-lightning"></i> 原生高性能 · 本地优先 · 100% 数据隐私安全
         </div>
-        <h1>适配 CPU 的 <span class="text-aurora">纯本地 AI 桌面工具矩阵</span></h1>
+        <h1>探索极客心流的 <span class="text-aurora">工业级桌面工具矩阵</span></h1>
         <p>
-          无需昂贵显卡，拒绝云端上传。基于底层指令集与轻量模型优化，通过 CPU 稳定驱动每一款本地 AI 生产力工具，永久保障数据隐私与安全。
+          以 AI 协同与极客心流，打造真正自主可控、极致轻量、100% 数据本地化的桌面超级工具。涵盖智能音视频笔记、可转债日内量化、文献研报 OCR 等独立生产力终端。
         </p>
 
         <!-- Trust Badges -->
         <div class="hero-trust-bar">
-          <div class="trust-chip"><i class="fa-solid fa-circle-check"></i> CPU 稳定离线运行</div>
-          <div class="trust-chip"><i class="fa-solid fa-circle-check"></i> 100% 离线免联网</div>
-          <div class="trust-chip"><i class="fa-solid fa-circle-check"></i> 零数据上传与隐私泄露</div>
-          <div class="trust-chip"><i class="fa-solid fa-circle-check"></i> 永久免费单机可用</div>
+          <div class="trust-chip"><i class="fa-solid fa-circle-check"></i> 原生高性能 (Rust + Tauri)</div>
+          <div class="trust-chip"><i class="fa-solid fa-circle-check"></i> 100% 本地运行零上传</div>
+          <div class="trust-chip"><i class="fa-solid fa-circle-check"></i> 核心端数据零泄露</div>
+          <div class="trust-chip"><i class="fa-solid fa-circle-check"></i> 永久独立买断/单机可用</div>
         </div>
 
         <!-- Command Search & Category Control Center -->
         <div class="filter-control-center">
           <div class="search-bar-wrap">
             <i class="fa-solid fa-magnifying-glass search-icon"></i>
-            <input type="text" placeholder="快速检索工具与功能（如：视频转写、PDF 问答、试卷切题、音频降噪、公式识别...）" oninput="searchTools(this.value)" />
+            <input type="text" placeholder="快速检索工具与功能（如：视频转写、可转债量化、MiniQMT、PDF 问答、试卷切题、音频降噪、公式识别...）" oninput="searchTools(this.value)" />
             <span class="search-badge-hint"><i class="fa-solid fa-bolt"></i> 实时过滤</span>
           </div>
           <div class="filter-tabs-row">
-            <div class="tab-pill active" onclick="filterCategory('all', this)"><i class="fa-solid fa-layer-group"></i> 全部工具 (6)</div>
-            <div class="tab-pill" onclick="filterCategory('media', this)"><i class="fa-solid fa-film"></i> 音视频 (3)</div>
+            <div class="tab-pill active" onclick="filterCategory('all', this)"><i class="fa-solid fa-layer-group"></i> 全部工具 (7)</div>
+            <div class="tab-pill" onclick="filterCategory('media', this)"><i class="fa-solid fa-film"></i> AI 音视频 (3)</div>
+            <div class="tab-pill" onclick="filterCategory('quant', this)"><i class="fa-solid fa-chart-line"></i> 金融量化 (1)</div>
             <div class="tab-pill" onclick="filterCategory('doc', this)"><i class="fa-solid fa-file-lines"></i> 文档研报 (1)</div>
             <div class="tab-pill" onclick="filterCategory('study', this)"><i class="fa-solid fa-graduation-cap"></i> 学习备考 (2)</div>
           </div>
@@ -1134,7 +1145,7 @@
           <div>
             <div class="matrix-card-top">
               <div class="tool-icon-wrapper icon-video"><i class="fa-solid fa-film"></i></div>
-              <span class="status-capsule capsule-ready"><i class="fa-solid fa-check"></i> 已就绪 · v0.1.44</span>
+              <span class="status-capsule capsule-ready"><i class="fa-solid fa-check"></i> 已就绪 · v0.1.50</span>
             </div>
             <h3>VideoNotes</h3>
             <p>音视频 AI 笔记与转写工具。内置 Fun-ASR 本地大模型与标点对齐，单机稳定生成结构化时间轴笔记与双语对照。</p>
@@ -1155,7 +1166,33 @@
           </div>
         </div>
 
-        <!-- Card 2: PDF AI Studio -->
+        <!-- Card 2: BondPulse -->
+        <div class="matrix-card" data-cat="quant" onclick="navigateTo('bondpulse')">
+          <div>
+            <div class="matrix-card-top">
+              <div class="tool-icon-wrapper icon-quant"><i class="fa-solid fa-chart-line"></i></div>
+              <span class="status-capsule capsule-ready"><i class="fa-solid fa-check"></i> 已就绪 · v0.1.38</span>
+            </div>
+            <h3>BondPulse</h3>
+            <p>可转债极速日内量化交易终端。基于 MiniQMT 本地直连，全市场秒级放量突破捕捉，闭环自动交易与毫秒级硬核风控。</p>
+            
+            <div class="card-preview-strip">
+              <i class="fa-solid fa-shield-halved"></i> 本地 MiniQMT 直连 · 零云端中转 · 本地 SQLite 审计
+            </div>
+
+            <ul class="matrix-features">
+              <li><i class="fa-solid fa-check"></i> 沪深全市场可转债实时秒级监控，捕捉盘口突发异常放量</li>
+              <li><i class="fa-solid fa-check"></i> 内置单帧触发、信号确认、止盈止损持仓保护与日终自动平仓</li>
+              <li><i class="fa-solid fa-check"></i> 直连本地券商 MiniQMT 端口，交易凭据与配置 100% 存留本地</li>
+            </ul>
+          </div>
+          <div class="matrix-card-footer">
+            <span class="btn-card-link">进入专属详情页 <i class="fa-solid fa-arrow-right"></i></span>
+            <span class="btn-action-sm"><i class="fa-brands fa-windows"></i> 免费下载</span>
+          </div>
+        </div>
+
+        <!-- Card 3: PDF AI Studio -->
         <div class="matrix-card" data-cat="doc" onclick="navigateTo('pdfnotes')">
           <div>
             <div class="matrix-card-top">
@@ -1274,37 +1311,37 @@
       <!-- Comparison Section -->
       <section class="comparison-wrapper" id="offline-philosophy">
         <div class="comparison-head">
-          <h3>为什么选择 CPU-AI-HUB 纯本地 CPU 方案？</h3>
-          <span style="font-size: 0.84rem; color: var(--text-secondary);"><i class="fa-solid fa-microchip"></i> 务实可行 · 隐私第一原则</span>
+          <h3>为什么选择 Vibecoding Studio 原生与本地优先架构？</h3>
+          <span style="font-size: 0.84rem; color: var(--text-secondary);"><i class="fa-solid fa-bolt-lightning"></i> 极客自研 · 性能与隐私第一原则</span>
         </div>
         <table class="comparison-table">
           <thead>
             <tr>
               <th>核心维度</th>
-              <th class="col-highlight">CPU-AI-HUB 桌面工具矩阵 (本地 CPU 方案)</th>
-              <th>传统云端 AI / 依赖昂贵 GPU 方案</th>
+              <th class="col-highlight">Vibecoding Studio 独立桌面矩阵</th>
+              <th>传统云端 SaaS / 依赖云端与高额订阅方案</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td><strong>硬件门槛与显卡成本</strong></td>
-              <td class="col-highlight"><i class="fa-solid fa-circle-check" style="color: var(--emerald);"></i> 通过 CPU 即可稳定运行，无需独立显卡</td>
-              <td style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark" style="color: var(--rose);"></i> 动辄要求万元级大显存 GPU 或昂贵云端算力</td>
+              <td><strong>数据与资产安全</strong></td>
+              <td class="col-highlight"><i class="fa-solid fa-circle-check" style="color: var(--emerald);"></i> 100% 留在用户本地，音视频不上传，交易直连本地券商</td>
+              <td style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark" style="color: var(--rose);"></i> 文件/文档必须上传第三方服务器，交易依赖云端托管</td>
             </tr>
             <tr>
-              <td><strong>数据私密性</strong></td>
-              <td class="col-highlight"><i class="fa-solid fa-circle-check" style="color: var(--emerald);"></i> 100% 留在用户本地，永不向云端发送</td>
-              <td style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark" style="color: var(--rose);"></i> 音视频、敏感文档必须上传第三方服务器</td>
+              <td><strong>系统能耗与性能</strong></td>
+              <td class="col-highlight"><i class="fa-solid fa-circle-check" style="color: var(--emerald);"></i> Rust + Tauri 原生构建，轻量低耗，CPU 深度指令集优化</td>
+              <td style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark" style="color: var(--rose);"></i> 动辄数百兆 Electron 臃肿套壳，内存暴涨，风扇狂转</td>
+            </tr>
+            <tr>
+              <td><strong>网络抗脆弱性</strong></td>
+              <td class="col-highlight"><i class="fa-solid fa-circle-check" style="color: var(--emerald);"></i> 离线可用，量化走本地 IPC 管道直通券商，杜绝外部抖动</td>
+              <td style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark" style="color: var(--rose);"></i> 弱网或断网直接瘫痪，网络抖动导致丢单或转录中断</td>
             </tr>
             <tr>
               <td><strong>费用透明度</strong></td>
-              <td class="col-highlight"><i class="fa-solid fa-circle-check" style="color: var(--emerald);"></i> 下载即可离线使用，无隐形扣费与 Token 限制</td>
-              <td style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark" style="color: var(--rose);"></i> 按分钟/按页计费，包月订阅昂贵</td>
-            </tr>
-            <tr>
-              <td><strong>网络适应力</strong></td>
-              <td class="col-highlight"><i class="fa-solid fa-circle-check" style="color: var(--emerald);"></i> 飞机、高铁、离线实验室随时流畅运行</td>
-              <td style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark" style="color: var(--rose);"></i> 弱网、断网环境下软件完全瘫痪</td>
+              <td class="col-highlight"><i class="fa-solid fa-circle-check" style="color: var(--emerald);"></i> 下载即可单机独立使用，无隐形扣费与 Token 消耗陷阱</td>
+              <td style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark" style="color: var(--rose);"></i> 按分钟/按页/按月计费，包月订阅昂贵且频繁账单背刺</td>
             </tr>
           </tbody>
         </table>
@@ -1439,7 +1476,136 @@
     </main>
 
     <!-- ==================================================== -->
-    <!-- VIEW 3: PDF AI Studio 专属独立产品介绍页面               -->
+    <!-- VIEW 3: BondPulse 可转债量化交易终端专属页面          -->
+    <!-- ==================================================== -->
+    <main id="view-bondpulse" class="view-page">
+      <section class="tool-hero-box">
+        <div class="btn-back-pill" onclick="navigateTo('hub')">
+          <i class="fa-solid fa-arrow-left"></i> 返回首页
+        </div>
+        <h1>BondPulse<br /><span style="color: #34d399;">可转债极速日内量化交易终端</span></h1>
+        <p>
+          专为沪深可转债日内（T+0）交易打造的单机自动化量化终端。本地 MiniQMT 端口直连券商实盘，毫秒级捕捉全市场突发异常放量，全流程执行买入、持仓保护、自动止盈止损与日终强制清仓。
+        </p>
+
+        <div class="tool-cta-group">
+          <a href="#" class="btn-primary-dl" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%); box-shadow: 0 0 30px rgba(16, 185, 129, 0.45);">
+            <i class="fa-brands fa-windows"></i> 免费下载 Windows 实盘版 (.exe)
+          </a>
+          <a href="#" class="btn-secondary-dl">
+            <i class="fa-solid fa-file-zipper"></i> 免安装绿色便携版 (.zip)
+          </a>
+        </div>
+      </section>
+
+      <!-- BondPulse Interactive Mockup -->
+      <div class="app-window-frame">
+        <div class="window-titlebar">
+          <div class="window-dots">
+            <div class="dot-ctrl dot-close"></div>
+            <div class="dot-ctrl dot-min"></div>
+            <div class="dot-ctrl dot-max"></div>
+          </div>
+          <div class="window-title-text">
+            <i class="fa-solid fa-chart-line"></i> BondPulse v0.1.38 - [实盘状态] MiniQMT 端口已连接 · 沪深转债池实时监控中
+          </div>
+          <div style="font-size: 0.8rem; color: #34d399; font-weight: 700;">
+            <i class="fa-solid fa-shield-halved"></i> 100% 本地直连券商 · 零云端中转
+          </div>
+        </div>
+
+        <div class="window-content-split">
+          <div class="split-pane-left">
+            <div style="background: rgba(0, 0, 0, 0.45); border-radius: 12px; padding: 18px; border: 1px solid var(--border-hairline);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+                <span style="font-size: 0.86rem; font-weight: 700; color: var(--text-white);"><i class="fa-solid fa-radar" style="color: #34d399;"></i> 异常放量捕捉池 (实时秒级扫描)</span>
+                <span style="font-size: 0.74rem; color: #34d399; background: rgba(16, 185, 129, 0.12); padding: 2px 8px; border-radius: 4px;">沪深 400+ 可转债全覆盖</span>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 8px; font-family: var(--font-mono); font-size: 0.82rem;">
+                <div style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255, 255, 255, 0.04); border-radius: 6px; border-left: 3px solid #34d399;">
+                  <span>128144 某转债</span>
+                  <span style="color: #f43f5e; font-weight: 700;">+3.86%</span>
+                  <span style="color: #38bdf8;">放量 4.5x</span>
+                  <span style="color: #34d399;">[已触发买入] 100 张</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255, 255, 255, 0.02); border-radius: 6px; border-left: 3px solid rgba(56, 189, 248, 0.5);">
+                  <span>113642 某转债</span>
+                  <span style="color: #f43f5e; font-weight: 700;">+1.92%</span>
+                  <span style="color: #38bdf8;">放量 2.8x</span>
+                  <span style="color: var(--amber);">[多帧确认中...]</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 10px; background: rgba(255, 255, 255, 0.02); border-radius: 6px; border-left: 3px solid var(--border-hairline);">
+                  <span>123188 某转债</span>
+                  <span style="color: #34d399; font-weight: 700;">-0.45%</span>
+                  <span style="color: var(--text-tertiary);">放量 1.0x</span>
+                  <span style="color: var(--text-secondary);">池内观察</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="split-pane-right">
+            <div style="background: rgba(0, 0, 0, 0.45); border-radius: 12px; padding: 18px; border: 1px solid var(--border-hairline);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+                <span style="font-size: 0.86rem; font-weight: 700; color: var(--text-white);"><i class="fa-solid fa-lock" style="color: var(--amber);"></i> 持仓保护与风控闭环</span>
+                <span style="font-size: 0.74rem; color: var(--text-secondary);">本地 SQLite 毫秒审计</span>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 10px; font-size: 0.84rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; border-bottom: 1px solid var(--border-hairline);">
+                  <span style="color: var(--text-secondary);">当前在管持仓</span>
+                  <strong style="color: var(--text-white);">128144 · 100 张</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; border-bottom: 1px solid var(--border-hairline);">
+                  <span style="color: var(--text-secondary);">动态浮动盈亏</span>
+                  <strong style="color: #f43f5e; font-family: var(--font-mono);">+1.42% (止盈追踪线: +1.80%)</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; border-bottom: 1px solid var(--border-hairline);">
+                  <span style="color: var(--text-secondary);">硬核止损保护线</span>
+                  <strong style="color: #38bdf8; font-family: var(--font-mono);">-0.80% (触碰自动市价平仓)</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span style="color: var(--text-secondary);">日终强制清仓</span>
+                  <strong style="color: #34d399; font-family: var(--font-mono);">14:55:00 自动清仓不留隔夜</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bento Grid Showcase -->
+      <div class="bento-showcase">
+        <div class="bento-tile col-span-2">
+          <h4><i class="fa-solid fa-network-wired" style="color: #34d399;"></i> 本地 MiniQMT 原生直连 · 资金与密码永不上云</h4>
+          <p>无需向任何第三方云平台提供券商交易密码或资金委托权限。基于 Rust + Python Sidecar 原生架构，交易指令通过本机 IPC 管道直接下发至券商官方 MiniQMT 客户端，保障绝对的资金自主可控。</p>
+        </div>
+        <div class="bento-tile">
+          <h4><i class="fa-solid fa-bolt" style="color: var(--cyan);"></i> 全市场毫秒级放量捕捉</h4>
+          <p>实时并发订阅沪深全市场 400+ 只可转债盘口分时行情，基于量价比突破模型，毫秒级侦测突发异常大单拉升。</p>
+        </div>
+        <div class="bento-tile">
+          <h4><i class="fa-solid fa-shield-halved" style="color: var(--amber);"></i> 多维硬核风控与保护</h4>
+          <p>内置单笔委托上限、单标的持仓限额、断线自动报警、买卖反向隔离与日终无条件清仓，严守本金安全红线。</p>
+        </div>
+        <div class="bento-tile col-span-2">
+          <h4><i class="fa-solid fa-database" style="color: var(--purple);"></i> 本地 SQLite 交易黑匣子审计</h4>
+          <p>盘口事件、触发快照、委托回执、成交流水与每回合盈亏对账全部持久化存留本地数据库，随时随地追溯复盘。</p>
+        </div>
+      </div>
+
+      <!-- Download Banner -->
+      <div class="hero-download-banner" style="border-color: rgba(16, 185, 129, 0.35);">
+        <h2>立即开启专业可转债量化自动化交易</h2>
+        <p>支持 Windows 10/11，适配各大主流支持 MiniQMT（量化交易客户端）的券商账户。</p>
+        <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
+          <a href="#" class="btn-primary-dl" style="font-size: 1.12rem; padding: 16px 40px; background: linear-gradient(135deg, #059669 0%, #10b981 100%); box-shadow: 0 0 30px rgba(16, 185, 129, 0.45);"><i class="fa-brands fa-windows"></i> 免费下载 Windows 实盘版</a>
+          <a href="#" class="btn-secondary-dl"><i class="fa-solid fa-file-zipper"></i> 免安装便携版</a>
+        </div>
+      </div>
+    </main>
+
+    <!-- ==================================================== -->
+    <!-- VIEW 4: PDF AI Studio 专属独立产品介绍页面               -->
     <!-- ==================================================== -->
     <main id="view-pdfnotes" class="view-page">
       <section class="tool-hero-box">
@@ -1502,29 +1668,30 @@
       </div>
     </main>
 
-    <!-- Refined, Clean Obsidian Footer (简洁高级微改版) -->
+    <!-- Refined, Clean Obsidian Footer -->
     <footer>
       <div class="footer-inner-clean">
         <div class="footer-brand-clean" onclick="navigateTo('hub')">
-          <div class="brand-chip-icon" style="width: 28px; height: 28px; font-size: 0.85rem;"><i class="fa-solid fa-microchip"></i></div>
-          <span>CPU-AI-HUB</span>
+          <div class="brand-chip-icon" style="width: 28px; height: 28px; font-size: 0.85rem;"><i class="fa-solid fa-bolt-lightning"></i></div>
+          <span>Vibecoding Studio</span>
         </div>
         <div class="footer-nav-clean">
           <a onclick="navigateTo('hub')">首页</a>
           <a onclick="navigateTo('videonotes')">VideoNotes</a>
+          <a onclick="navigateTo('bondpulse')">BondPulse</a>
           <a onclick="navigateTo('pdfnotes')">PDF AI Studio</a>
           <a onclick="navigateTo('exampaper')">ExamPaper AI</a>
-          <a onclick="navigateTo('hub')#offline-philosophy">CPU 离线理念</a>
+          <a onclick="navigateTo('hub')#offline-philosophy">工坊理念</a>
         </div>
       </div>
       <div class="footer-sub-clean">
         <div>
-          © 2026 CPU-AI-HUB. 100% 本地离线运行 · 适配 CPU · 极致单机隐私安全
+          © 2026 Vibecoding Studio. 100% 本地运行 · 原生高性能 · 极致数据安全
         </div>
         <div style="display: flex; gap: 10px; align-items: center;">
           <span class="footer-badge-pill"><i class="fa-brands fa-windows"></i> Win 10/11 64-bit</span>
-          <span class="footer-badge-pill"><i class="fa-solid fa-microchip"></i> AVX2 Ready</span>
-          <span class="footer-badge-pill"><i class="fa-solid fa-shield-halved"></i> Zero Cloud</span>
+          <span class="footer-badge-pill"><i class="fa-solid fa-microchip"></i> Rust + Tauri Native</span>
+          <span class="footer-badge-pill"><i class="fa-solid fa-shield-halved"></i> Local-First</span>
         </div>
       </div>
     </footer>
