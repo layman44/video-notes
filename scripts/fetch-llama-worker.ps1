@@ -24,8 +24,21 @@ function Receive-File {
         [Parameter(Mandatory = $true)][string]$Destination
     )
 
-    & curl.exe --location --fail --retry 5 --retry-all-errors --retry-delay 2 --user-agent "VideoNotes build" --output $Destination $Uri
-    if ($LASTEXITCODE -ne 0) {
+    $urls = @()
+    if ($Uri -like "https://github.com/*" -or $Uri -like "https://raw.githubusercontent.com/*") {
+        $urls += "https://gh-proxy.com/$Uri"
+    }
+    $urls += $Uri
+
+    $downloadSuccess = $false
+    foreach ($url in $urls) {
+        & curl.exe --location --fail --retry 3 --retry-delay 2 --user-agent "VideoNotes build" --output $Destination $url
+        if ($LASTEXITCODE -eq 0) {
+            $downloadSuccess = $true
+            break
+        }
+    }
+    if (-not $downloadSuccess) {
         throw "Download failed with exit code $LASTEXITCODE`: $Uri"
     }
 }
@@ -61,7 +74,16 @@ try {
         }
         Copy-Item -LiteralPath $worker.FullName -Destination $workerTarget -Force
 
-        Get-ChildItem -LiteralPath $worker.DirectoryName -Filter "*.dll" -File | ForEach-Object {
+        $excludeDlls = @(
+            "llama-server-impl.dll",
+            "llama-bench-impl.dll",
+            "llama-batched-bench-impl.dll",
+            "llama-perplexity-impl.dll",
+            "llama-fit-params-impl.dll",
+            "llama-quantize-impl.dll",
+            "llama-completion-impl.dll"
+        )
+        Get-ChildItem -LiteralPath $worker.DirectoryName -Filter "*.dll" -File | Where-Object { $_.Name -notin $excludeDlls } | ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $videoNotesLlamaDir $_.Name) -Force
         }
     }
@@ -74,8 +96,11 @@ try {
     }
     $lock | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $videoNotesLlamaDir "llama-worker.lock.json") -Encoding utf8
 
+    Push-Location $videoNotesLlamaDir
     & $workerTarget --version
-    if ($LASTEXITCODE -ne 0) {
+    $exitCode = $LASTEXITCODE
+    Pop-Location
+    if ($exitCode -ne 0) {
         throw "llama-cli.exe failed its startup check"
     }
     Write-Host "llama.cpp CPU worker is ready in $videoNotesLlamaDir"

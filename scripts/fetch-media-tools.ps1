@@ -22,8 +22,21 @@ function Receive-File {
         [Parameter(Mandatory = $true)][string]$Destination
     )
 
-    & curl.exe --location --fail --retry 3 --retry-delay 2 --output $Destination $Uri
-    if ($LASTEXITCODE -ne 0) {
+    $urls = @()
+    if ($Uri -like "https://github.com/*") {
+        $urls += "https://gh-proxy.com/$Uri"
+    }
+    $urls += $Uri
+
+    $downloadSuccess = $false
+    foreach ($url in $urls) {
+        & curl.exe --location --fail --retry 3 --retry-delay 2 --output $Destination $url
+        if ($LASTEXITCODE -eq 0) {
+            $downloadSuccess = $true
+            break
+        }
+    }
+    if (-not $downloadSuccess) {
         throw "Download failed with exit code $LASTEXITCODE`: $Uri"
     }
 }

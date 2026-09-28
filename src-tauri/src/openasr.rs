@@ -13,7 +13,22 @@ use tokio::io::AsyncWriteExt;
 pub const MODEL_ID: &str = "moss-transcribe-diarize:q4";
 pub const MODEL_NAME: &str = "MOSS-Transcribe-Diarize 0.9B q4（OpenASR）";
 pub const MODEL_SIZE_LABEL: &str = "约 860 MiB";
-const MODEL_URL: &str = "https://huggingface.co/OpenASR/moss-transcribe-diarize/resolve/196b6d4939c334ff41559db2549f1432899f8822/moss-transcribe-diarize-q4_k.oasr";
+#[derive(Debug, Clone, Copy)]
+struct ModelSource {
+    name: &'static str,
+    url: &'static str,
+}
+
+const MODEL_SOURCES: &[ModelSource] = &[
+    ModelSource {
+        name: "国内镜像（HF-Mirror）",
+        url: "https://hf-mirror.com/OpenASR/moss-transcribe-diarize/resolve/196b6d4939c334ff41559db2549f1432899f8822/moss-transcribe-diarize-q4_k.oasr",
+    },
+    ModelSource {
+        name: "官方源（Hugging Face）",
+        url: "https://huggingface.co/OpenASR/moss-transcribe-diarize/resolve/196b6d4939c334ff41559db2549f1432899f8822/moss-transcribe-diarize-q4_k.oasr",
+    },
+];
 const MODEL_SHA256: &str = "0044546efb95d4d08e85f5574da2b042a5a4fb2490678c666b65404f1ac94c04";
 
 #[derive(Debug, Clone, Serialize)]
@@ -110,33 +125,57 @@ pub async fn download_model(app: &AppHandle) -> Result<OpenAsrModelStatus, Strin
         fs::create_dir_all(parent).map_err(|error| format!("无法创建 OpenASR 模型目录：{error}"))?;
     }
     let temporary = destination.with_extension("oasr.download");
-    let client = Client::new();
-    emit_progress(app, 0, None, 0, "正在下载 MOSS q4 模型……");
-    let response = client
-        .get(MODEL_URL)
-        .send()
-        .await
-        .map_err(|error| format!("下载 MOSS q4 失败：{error}"))?
-        .error_for_status()
-        .map_err(|error| format!("下载 MOSS q4 失败：{error}"))?;
-    let total = response.content_length();
-    let mut stream = response.bytes_stream();
-    let mut file = tokio::fs::File::create(&temporary)
-        .await
-        .map_err(|error| format!("无法创建模型临时文件：{error}"))?;
-    let mut downloaded = 0u64;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| format!("读取模型下载流失败：{error}"))?;
-        file.write_all(&chunk).await.map_err(|error| format!("保存模型失败：{error}"))?;
-        downloaded += chunk.len() as u64;
-        let percent = total.map(|size| ((downloaded as f64 / size.max(1) as f64) * 100.0).round() as u8).unwrap_or(0);
-        emit_progress(app, downloaded, total, percent, "正在下载 MOSS q4 模型……");
+    let client = Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(12))
+        .build()
+        .unwrap_or_else(|_| Client::new());
+
+    let mut errors = Vec::new();
+    for source in MODEL_SOURCES {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        emit_progress(app, 0, None, 0, format!("正在从{}下载 MOSS q4 模型……", source.name));
+
+        let res = async {
+            let response = client
+                .get(source.url)
+                .send()
+                .await
+                .map_err(|error| format!("连接失败：{error}"))?
+                .error_for_status()
+                .map_err(|error| format!("HTTP 状态错误：{error}"))?;
+            let total = response.content_length();
+            let mut stream = response.bytes_stream();
+            let mut file = tokio::fs::File::create(&temporary)
+                .await
+                .map_err(|error| format!("无法创建模型临时文件：{error}"))?;
+            let mut downloaded = 0u64;
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|error| format!("读取模型下载流失败：{error}"))?;
+                file.write_all(&chunk).await.map_err(|error| format!("保存模型失败：{error}"))?;
+                downloaded += chunk.len() as u64;
+                let percent = total.map(|size| ((downloaded as f64 / size.max(1) as f64) * 100.0).round() as u8).unwrap_or(0);
+                emit_progress(app, downloaded, total, percent, format!("正在从{}下载 MOSS q4 模型……", source.name));
+            }
+            file.flush().await.map_err(|error| format!("刷新模型文件失败：{error}"))?;
+            drop(file);
+            verify_sha256(&temporary)?;
+            fs::rename(&temporary, &destination).map_err(|error| format!("写入 MOSS q4 模型失败：{error}"))?;
+            Ok::<(), String>(())
+        }.await;
+
+        match res {
+            Ok(()) => {
+                emit_progress(app, 0, None, 100, "MOSS q4 模型安装完成");
+                return Ok(model_status(app));
+            }
+            Err(err) => {
+                let _ = tokio::fs::remove_file(&temporary).await;
+                errors.push(format!("{}: {}", source.name, err));
+            }
+        }
     }
-    file.flush().await.map_err(|error| format!("刷新模型文件失败：{error}"))?;
-    verify_sha256(&temporary)?;
-    fs::rename(&temporary, &destination).map_err(|error| format!("写入 MOSS q4 模型失败：{error}"))?;
-    emit_progress(app, downloaded, total, 100, "MOSS q4 模型安装完成");
-    Ok(model_status(app))
+
+    Err(format!("MOSS q4 下载失败：{}", errors.join("；")))
 }
 
 pub fn delete_model(app: &AppHandle) -> Result<(), String> {

@@ -18,8 +18,18 @@ New-Item -ItemType Directory -Force -Path $toolsDir, $tempDir | Out-Null
 try {
     if ($Force -or -not (Test-Path -LiteralPath $target)) {
         $archive = Join-Path $tempDir $archiveName
-        & curl.exe --location --fail --retry 5 --retry-all-errors --retry-delay 2 --user-agent "VideoNotes build" --output $archive $archiveUrl
-        if ($LASTEXITCODE -ne 0) { throw "OpenASR 下载失败：$archiveUrl" }
+        $officialUrl = "https://github.com/QuintinShaw/openasr/releases/download/v$version/$archiveName"
+        $mirrorUrl = "https://gh-proxy.com/$officialUrl"
+        $archiveUrl = $officialUrl
+        $downloadSuccess = $false
+        foreach ($url in @($mirrorUrl, $officialUrl)) {
+            & curl.exe --location --fail --retry 3 --retry-delay 2 --user-agent "VideoNotes build" --output $archive $url
+            if ($LASTEXITCODE -eq 0) {
+                $downloadSuccess = $true
+                break
+            }
+        }
+        if (-not $downloadSuccess) { throw "OpenASR 下载失败：$officialUrl" }
         $archiveSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
         [ordered]@{ version = $version; source = $archiveUrl; sha256 = $archiveSha256 } |
             ConvertTo-Json -Depth 3 |

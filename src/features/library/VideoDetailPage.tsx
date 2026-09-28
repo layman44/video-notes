@@ -1039,7 +1039,7 @@ export function VideoDetailPage({ video, onBack, onRefresh, autoPlayOnTranscript
               {segments.length > 0 ? (
                 <button
                   type="button"
-                  className="export-srt-button secondary-button compact-button"
+                  className="export-srt-button"
                   onClick={() => void exportSrt()}
                   title="导出 SRT 字幕文件"
                   aria-label="导出字幕"

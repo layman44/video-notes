@@ -2419,9 +2419,26 @@ select:focus-visible,
 }
 
 .export-srt-button {
+  display: inline-flex;
+  align-items: center;
   gap: 5px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
   font-size: 12px;
-  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.export-srt-button:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
 }
 .detail-search {
   display: flex;

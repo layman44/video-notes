@@ -154,6 +154,12 @@ fn candidate_tool_dirs(app: &AppHandle) -> Vec<PathBuf> {
             .join("resources")
             .join("tools"),
     );
+    if let Ok(data_dir) = app.path().app_local_data_dir() {
+        candidates.push(data_dir.join("native-funasr-gguf").join("tools").join("ffmpeg"));
+        candidates.push(data_dir.join("native-funasr").join("tools").join("ffmpeg"));
+        candidates.push(data_dir.join("tools").join("ffmpeg"));
+        candidates.push(data_dir.join("tools"));
+    }
     candidates
 }
 
@@ -208,7 +214,7 @@ pub fn resolve_media_tools(app: &AppHandle) -> Result<MediaToolPaths, String> {
     .collect::<Vec<_>>();
     if !missing.is_empty() {
         return Err(format!(
-            "缺少媒体组件：{}。请重新安装完整版本的 VideoNotes",
+            "缺少媒体组件：{}。请先到“模型”页面安装本地运行时（系统将自动配置 FFmpeg），或在系统环境变量中配置 FFmpeg",
             missing.join("、")
         ));
     }
