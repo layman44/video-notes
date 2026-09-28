@@ -1649,12 +1649,12 @@
 
   <script>
     // ============================================================
-    // 分发配置：发布新版本时只需改这里
-    //   exe -> 对应 data-dist="exe" 的按钮
+    // 分发配置：发布新版本时只需改下面的版本号
+    //   下载按钮通过 data-dist="exe" 关联到 DIST.exe
     // ============================================================
+    const DIST_VERSION = "0.1.50";
     const DIST = {
-      version: "0.1.50",
-      exe: "https://dl.example.com/videonotes/VideoNotes_0.1.50_x64-setup.exe"
+      exe: `https://dl.miniqmt.top/videonotes/VideoNotes_${DIST_VERSION}_x64-setup.exe`
     };
 
     // 把下载地址注入按钮；未提供的渠道自动置灰不可点

@@ -468,38 +468,8 @@ pub fn ensure_douyin_cookies(
 
     let _ = fs::remove_file(&cookie_file);
 
-    let script_path = find_tool(app, "douyin-cookies.mjs")
-        .ok_or_else(|| "缺少抖音反爬解析脚本（douyin-cookies.mjs）".to_string())?;
-
-    let node_path = find_node_runtime()
-        .ok_or_else(|| "未检测到 Node.js 运行时环境，解析抖音链接需要 Node.js 支持".to_string())?;
-
-    let output = media_command(&node_path)
-        .arg(&script_path)
-        .arg("--url")
-        .arg(source_url)
-        .arg("--output")
-        .arg(&cookie_file)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| format!("解析抖音链接失败（缺少运行环境）：{error}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let combined = if !stderr.trim().is_empty() {
-            stderr.trim().to_string()
-        } else {
-            stdout.trim().to_string()
-        };
-
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&combined) {
-            if let Some(err) = val.get("error").and_then(|v| v.as_str()) {
-                return Err(format!("获取视频信息失败：{err}"));
-            }
-        }
-        return Err(format!("获取视频信息失败：{combined}"));
-    }
+    tauri::async_runtime::block_on(crate::douyin_cdp::extract_douyin_cookies(source_url, &cookie_file))
+        .map_err(|e| format!("解析抖音链接失败：{e}"))?;
 
     if !cookie_file.is_file() || fs::metadata(&cookie_file).map(|m| m.len()).unwrap_or(0) == 0 {
         return Err("获取视频信息失败，请检查链接有效性或稍后重试".to_string());

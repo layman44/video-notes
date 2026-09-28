@@ -37,7 +37,6 @@
       "resources/tools/THIRD_PARTY_NOTICES.md",
       "resources/tools/media-tools.lock.json",
       "resources/tools/yt-dlp.exe",
-      "resources/tools/douyin-cookies.mjs",
       "resources/tools/licenses/*",
       "resources/tools/llama/*",
       "resources/tools/openasr/*"

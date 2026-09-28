@@ -2,6 +2,7 @@ mod asr;
 pub(crate) mod audio_chunker;
 mod chunk_stitcher;
 mod ctc_alignment_ffi;
+pub(crate) mod douyin_cdp;
 mod embedding;
 pub mod error;
 mod media;
