@@ -58,6 +58,20 @@ struct StoredSettings {
     task_data_directory: String,
 }
 
+pub(crate) fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let s = path.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{}", stripped));
+        }
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            return PathBuf::from(stripped);
+        }
+    }
+    path.to_path_buf()
+}
+
 fn settings_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join("settings.json")
 }
@@ -67,19 +81,21 @@ fn load_task_data_directory(app_data_dir: &Path) -> PathBuf {
     let configured = fs::read_to_string(path)
         .ok()
         .and_then(|content| serde_json::from_str::<StoredSettings>(&content).ok())
-        .map(|settings| PathBuf::from(settings.task_data_directory));
-    let directory = configured.unwrap_or_else(|| app_data_dir.to_path_buf());
+        .map(|settings| strip_verbatim_prefix(&PathBuf::from(settings.task_data_directory)));
+    let directory = configured.unwrap_or_else(|| strip_verbatim_prefix(app_data_dir));
     if fs::create_dir_all(directory.join("tasks")).is_ok() {
         directory
     } else {
-        let _ = fs::create_dir_all(app_data_dir.join("tasks"));
-        app_data_dir.to_path_buf()
+        let default_dir = strip_verbatim_prefix(app_data_dir);
+        let _ = fs::create_dir_all(default_dir.join("tasks"));
+        default_dir
     }
 }
 
 fn save_task_data_directory(app_data_dir: &Path, directory: &Path) -> Result<(), String> {
+    let clean_dir = strip_verbatim_prefix(directory);
     let settings = StoredSettings {
-        task_data_directory: directory.to_string_lossy().into_owned(),
+        task_data_directory: clean_dir.to_string_lossy().into_owned(),
     };
     let content = serde_json::to_vec_pretty(&settings)
         .map_err(|error| format!("无法保存目录设置：{error}"))?;
@@ -96,11 +112,13 @@ fn current_task_data_directory(state: &State<'_, AppState>) -> Result<PathBuf, S
 }
 
 fn data_directory_settings(state: &State<'_, AppState>) -> Result<DataDirectorySettings, String> {
-    let current = current_task_data_directory(state)?;
+    let current = strip_verbatim_prefix(&current_task_data_directory(state)?);
+    let default_path = strip_verbatim_prefix(&state.app_data_dir);
+    let is_default = current == default_path;
     Ok(DataDirectorySettings {
         current_path: current.to_string_lossy().into_owned(),
-        default_path: state.app_data_dir.to_string_lossy().into_owned(),
-        is_default: current == state.app_data_dir,
+        default_path: default_path.to_string_lossy().into_owned(),
+        is_default,
     })
 }
 
@@ -190,10 +208,11 @@ fn change_task_data_directory(
 
     fs::create_dir_all(&requested_directory)
         .map_err(|error| format!("无法使用所选目录：{error}"))?;
-    let new_root = requested_directory
+    let canonical = requested_directory
         .canonicalize()
         .map_err(|error| format!("无法读取所选目录：{error}"))?;
-    let old_root = current_task_data_directory(state)?;
+    let new_root = strip_verbatim_prefix(&canonical);
+    let old_root = strip_verbatim_prefix(&current_task_data_directory(state)?);
     let old_tasks = old_root.join("tasks");
     let new_tasks = new_root.join("tasks");
     if new_tasks.starts_with(&old_tasks) && new_tasks != old_tasks {
@@ -1090,7 +1109,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let app_data_dir = app.path().app_data_dir()?;
+            let app_data_dir = strip_verbatim_prefix(&app.path().app_data_dir()?);
             fs::create_dir_all(&app_data_dir)?;
             let models_dir = app.path().app_local_data_dir()?.join("models");
             fs::create_dir_all(&models_dir)?;

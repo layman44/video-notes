@@ -27,6 +27,11 @@ const toolDescriptions: Record<string, string> = {
   "FFmpeg": "用于音视频格式转码、16kHz 音频提取及时长分析",
 };
 
+function cleanDisplayPath(path?: string): string {
+  if (!path) return "正在读取目录……";
+  return path.replace(/^\\\\\?\\UNC\\/, "\\\\").replace(/^\\\\\?\\/, "");
+}
+
 export function SettingsPage({
   autoPlayOnTranscriptClick,
   onAutoPlayOnTranscriptClickChange,
@@ -254,7 +259,7 @@ export function SettingsPage({
               <span>视频、音频、转录和 Markdown 笔记均保存在此目录中</span>
             </div>
             <div className="data-directory-controls">
-              <code title={dataDirectory?.currentPath}>{dataDirectory?.currentPath ?? "正在读取目录……"}</code>
+              <code title={cleanDisplayPath(dataDirectory?.currentPath)}>{cleanDisplayPath(dataDirectory?.currentPath)}</code>
               <div>
                 <button className="secondary-button compact-button" type="button" disabled={directoryBusy} onClick={() => void chooseDirectory()}>
                   {directoryBusy ? <LoaderCircle className="spin" size={15} /> : <FolderOpen size={15} />}
