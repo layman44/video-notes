@@ -6,7 +6,7 @@ __pycache__/
 *.py[cod]
 *.log
 .DS_Store
-models/
+/models/
 *.part
 src-tauri/resources/tools/*.exe
 src-tauri/resources/tools/**/*.exe
